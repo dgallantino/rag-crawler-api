@@ -1,0 +1,11 @@
+"""Planned: Shared Pydantic schemas used across API endpoints."""
+
+from pydantic import BaseModel
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+
+class MessageResponse(BaseModel):
+    message: str
