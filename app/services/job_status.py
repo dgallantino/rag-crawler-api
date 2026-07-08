@@ -7,6 +7,7 @@ from typing import Literal
 import redis
 
 from app.config import get_settings
+from app.rag.events import DocumentStatusEvent
 
 StepName = Literal["chunking", "embedding", "storing"]
 StepStatus = Literal["pending", "in_progress", "completed", "failed"]
@@ -63,3 +64,17 @@ def get_job_status(document_id: str) -> dict | None:
 
 def delete_job_status(document_id: str) -> None:
     _get_redis().delete(_job_key(document_id))
+
+
+def handle_document_status_event(event: DocumentStatusEvent) -> None:
+    """Handlers for document processing events emitted by the RAG pipeline."""
+    if event.step == "failed":
+        delete_job_status(event.document_id)
+        return
+
+    if event.step == "storing" and event.status == "completed":
+        set_job_step(event.document_id, "storing", "completed")
+        delete_job_status(event.document_id)
+        return
+
+    set_job_step(event.document_id, event.step, event.status)

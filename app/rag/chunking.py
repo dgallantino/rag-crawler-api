@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app.config import get_settings
 
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -62,12 +61,11 @@ def _nearest_heading(position: int, headings: list[tuple[int, str]]) -> str | No
     return current
 
 
-def chunk_markdown(text: str) -> list[ChunkResult]:
-    settings = get_settings()
-    overlap = int(settings.chunk_max_tokens * settings.chunk_overlap_percent / 100)
+def chunk_markdown(text: str, chunk_max_tokens: int, chunk_overlap_percent: float) -> list[ChunkResult]:
+    overlap = int(chunk_max_tokens * chunk_overlap_percent / 100)
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.chunk_max_tokens,
+        chunk_size=chunk_max_tokens,
         chunk_overlap=overlap,
         length_function=_token_length,
         separators=["\n## ", "\n### ", "\n#### ", "\n\n", "\n", " "],
@@ -89,6 +87,8 @@ def chunk_markdown(text: str) -> list[ChunkResult]:
         section_header = _nearest_heading(position, headings)
         if section_header:
             metadata["section_header"] = section_header
+        if headings:
+            metadata["all_headings"] = [heading_text for _, heading_text in headings]
         if tags:
             metadata["tags"] = tags
 

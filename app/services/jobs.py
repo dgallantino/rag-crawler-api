@@ -5,7 +5,9 @@ from celery import Celery
 
 from app.config import get_settings
 from app.database import SessionLocal
-from app.rag.pipeline import process_document as run_process_document
+from app.rag.pipeline import process_document 
+
+from app.services.job_status import handle_document_status_event
 
 settings = get_settings()
 
@@ -24,11 +26,16 @@ celery_app.conf.update(
 )
 
 
-@celery_app.task(name="process_document", bind=True, max_retries=0)
-def process_document(self, document_id: str) -> None:
+@celery_app.task(name="run_process_document", bind=True, max_retries=0)
+def run_process_document(self, document_id: str) -> None:
     """Chunk, embed, and store a document."""
     db = SessionLocal()
     try:
-        run_process_document(db, document_id)
+        process_document(
+            db, document_id,
+            chunk_max_tokens=settings.chunk_max_tokens,
+            chunk_overlap_percent=settings.chunk_overlap_percent,
+            on_status=handle_document_status_event,
+        )
     finally:
         db.close()

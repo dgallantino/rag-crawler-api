@@ -4,7 +4,7 @@
 
 def trigger_process_document(document_id: str) -> str:
     """Queue a document processing job."""
-    from app.services.jobs import process_document
+    from app.services.jobs import run_process_document
 
-    result = process_document.delay(document_id)
+    result = run_process_document.delay(document_id)
     return result.id

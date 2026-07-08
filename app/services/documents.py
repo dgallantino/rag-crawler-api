@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Document, SystemUser
 from app.schemas.documents import DocumentStatusResponse
-import app.services.job_status as job_status
+from app.services import job_status
 from app.services.triggers import trigger_process_document
 
 
