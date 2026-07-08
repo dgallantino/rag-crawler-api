@@ -1,6 +1,5 @@
 """Celery application and background task definitions."""
 
-from uuid import UUID
 
 from celery import Celery
 
@@ -23,21 +22,6 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
-
-
-@celery_app.task(name="crawl_url")
-def crawl_url(url: str, system_user_id: str | None = None) -> dict:
-    """Crawl a URL and persist results (persistence not yet implemented)."""
-    from app.services.crawl import run_crawl_for_url
-
-    db = SessionLocal()
-    try:
-        if system_user_id is None:
-            # TODO: require system_user_id once POST /crawl is wired
-            return {"url": url, "status": "stub", "error": "system_user_id required"}
-        return run_crawl_for_url(db, url, system_user_id=UUID(system_user_id))
-    finally:
-        db.close()
 
 
 @celery_app.task(name="process_document", bind=True, max_retries=0)

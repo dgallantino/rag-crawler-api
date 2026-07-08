@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentChunk
 from app.rag import chunking, embeddings
-from app.services import job_status
+import app.services.job_status as job_status
 
 
 def process_document(db: Session, document_id: str) -> None:

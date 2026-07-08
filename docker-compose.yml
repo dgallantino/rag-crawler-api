@@ -29,7 +29,7 @@ services:
       - redis
     volumes:
       - .:/app
-    command: celery -A app.jobs:celery_app worker --loglevel=info
+    command: celery -A app.services.jobs:celery_app worker --loglevel=info
 
   postgres:
     image: pgvector/pgvector:pg16

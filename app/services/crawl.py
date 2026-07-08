@@ -1,7 +1,7 @@
 """
 Production crawl orchestration.
 
-Pipeline composition for crawl jobs lives here (or in jobs.py), not in runner.py.
+Pipeline composition for crawl jobs lives here (or in services/jobs.py), not in runner.py.
 runner.py is CLI-only for local debugging.
 """
 

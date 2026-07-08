@@ -22,6 +22,12 @@ from app.services.system_user import (
 
 
 def cmd_run_crawler(args: argparse.Namespace) -> int:
+    """
+    Run the crawler pipeline locally for debugging (no DB required).
+    This is a temporary command to help with debugging the crawler pipeline.
+    It will be removed once the pipeline is fully implemented.
+    or replaced with a production-grade command
+    """
     from app.crawler.pipeline import DataRetrieverError
     from app.crawler.runner import count_crawl_results, run_crawl_debug
     from app.crawler.settings import DEFAULT_MAX_PAGES

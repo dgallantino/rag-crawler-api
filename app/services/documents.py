@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Document, SystemUser
 from app.schemas.documents import DocumentStatusResponse
-from app.services import job_status
+import app.services.job_status as job_status
 from app.services.triggers import trigger_process_document
 
 
@@ -25,6 +25,29 @@ def create_document_upload(
     filename: str,
     content: str,
 ) -> Document:
+    """
+    Create a new document entry in the database based on an uploaded file.
+
+    This function will:
+    - Attempt to create a new Document with the given filename and content,
+      associated with the provided system user.
+    - If a document with the same filename for the user already exists, it will raise
+      DocumentConflictError.
+    - On success, commits the new document, triggers the background processing job,
+      and returns the created Document object.
+
+    Args:
+        db (Session): SQLAlchemy database session.
+        user (SystemUser): The user uploading the document.
+        filename (str): Name of the uploaded file.
+        content (str): Raw content of the file.
+
+    Returns:
+        Document: The SQLAlchemy Document instance just created.
+
+    Raises:
+        DocumentConflictError: If a document with the same filename already exists.
+    """
     document = Document(
         system_user_id=user.id,
         title=filename,
@@ -49,6 +72,24 @@ def get_document_status(
     user: SystemUser,
     document_id: UUID,
 ) -> DocumentStatusResponse:
+    """
+    Retrieve the processing status of a specific document for a user.
+
+    Checks both the database and any available job status information in Redis
+    to provide the most up-to-date status for the requested document.
+
+    Args:
+        db (Session): SQLAlchemy database session.
+        user (SystemUser): The user requesting the status.
+        document_id (UUID): The UUID of the document.
+
+    Returns:
+        DocumentStatusResponse: Structured response containing the document's
+            status, processing step (if available), step details, and error message.
+
+    Raises:
+        DocumentNotFoundError: If the document does not exist for the given user.
+    """
     document = (
         db.query(Document)
         .filter(Document.id == document_id, Document.system_user_id == user.id)

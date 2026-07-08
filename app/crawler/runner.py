@@ -3,6 +3,8 @@ CLI-only developer helper for manually running the crawler pipeline.
 
 Do NOT import this module from jobs, services, or API code.
 Production paths should compose Pipeline([...]) directly at the call site.
+TODO: Remove this module once the pipeline is fully implemented.
+
 """
 
 from __future__ import annotations
@@ -62,7 +64,15 @@ def run_crawl_debug(
 
 
 def count_crawl_results(results: list[Any]) -> tuple[int, int]:
-    """Return (page_count, chunk_count) from pipeline results."""
+    """
+    Count the number of pages and chunks in the crawl results.
+
+    Args:
+        results (list[Any]): List of pipeline results.
+
+    Returns:
+        tuple[int, int]: (page_count, chunk_count)
+    """
     pages = 0
     chunks = 0
     for item in results:
