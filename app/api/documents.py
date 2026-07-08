@@ -13,7 +13,7 @@ from app.schemas.documents import (
     DocumentUploadResponse,
     DocumentValidationErrorResponse,
 )
-from app.services.document_validation import validate_markdown_upload
+from app.services.documents import validate_markdown_upload
 from app.services.documents import (
     DocumentConflictError,
     DocumentNotFoundError,

@@ -1,20 +1,25 @@
 """Tests for document processing pipeline."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
 
 from app.models import Document, DocumentChunk
 from app.rag.events import DocumentStatusEvent
-from app.rag.pipeline import process_document
+from app.rag.processor import ChunkResult, MarkdownProcessor
 
 
-@patch("app.rag.pipeline.embeddings.embed_texts")
-@patch("app.rag.pipeline.chunking.chunk_markdown")
+def _make_processor() -> MarkdownProcessor:
+    return MarkdownProcessor(
+        Mock(),
+        "test-model",
+        chunk_max_tokens=500,
+        chunk_overlap_percent=10,
+    )
+
+
 def test_process_document_success(
-    mock_chunk,
-    mock_embed,
     db_session,
     test_user,
 ) -> None:
@@ -28,16 +33,17 @@ def test_process_document_success(
     db_session.add(document)
     db_session.commit()
 
-    from app.rag.chunking import ChunkResult
-
-    mock_chunk.return_value = [
-        ChunkResult(content="chunk one", metadata={"section_header": "Pipeline"}),
-        ChunkResult(content="chunk two", metadata={"section_header": "Pipeline"}),
-    ]
-    mock_embed.return_value = [[0.1] * 1536, [0.2] * 1536]
+    processor = _make_processor()
+    processor.chunk = Mock(
+        return_value=[
+            ChunkResult(content="chunk one", metadata={"section_header": "Pipeline"}),
+            ChunkResult(content="chunk two", metadata={"section_header": "Pipeline"}),
+        ]
+    )
+    processor.embed_texts = Mock(return_value=[[0.1] * 1536, [0.2] * 1536])
 
     on_status = Mock()
-    process_document(db_session, str(document.id), on_status=on_status)
+    processor.process_document(db_session, str(document.id), on_status=on_status)
 
     db_session.refresh(document)
     assert document.status == "success"
@@ -57,11 +63,7 @@ def test_process_document_success(
     ]
 
 
-@patch("app.rag.pipeline.embeddings.embed_texts", side_effect=RuntimeError("embed failed"))
-@patch("app.rag.pipeline.chunking.chunk_markdown")
 def test_process_document_failure(
-    mock_chunk,
-    mock_embed,
     db_session,
     test_user,
 ) -> None:
@@ -75,13 +77,13 @@ def test_process_document_failure(
     db_session.add(document)
     db_session.commit()
 
-    from app.rag.chunking import ChunkResult
-
-    mock_chunk.return_value = [ChunkResult(content="chunk", metadata={})]
+    processor = _make_processor()
+    processor.chunk = Mock(return_value=[ChunkResult(content="chunk", metadata={})])
+    processor.embed_texts = Mock(side_effect=RuntimeError("embed failed"))
 
     on_status = Mock()
     with pytest.raises(RuntimeError, match="embed failed"):
-        process_document(db_session, str(document.id), on_status=on_status)
+        processor.process_document(db_session, str(document.id), on_status=on_status)
 
     db_session.refresh(document)
     assert document.status == "failed"
@@ -96,6 +98,7 @@ def test_process_document_failure(
 
 
 def test_process_document_missing_is_noop(db_session) -> None:
+    processor = _make_processor()
     on_status = Mock()
-    process_document(db_session, str(uuid4()), on_status=on_status)
+    processor.process_document(db_session, str(uuid4()), on_status=on_status)
     on_status.assert_not_called()

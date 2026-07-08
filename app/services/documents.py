@@ -1,5 +1,6 @@
 """Document upload and status services."""
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -9,6 +10,30 @@ from app.models import Document, SystemUser
 from app.schemas.documents import DocumentStatusResponse
 from app.services import job_status
 from app.services.triggers import trigger_process_document
+
+
+@dataclass(frozen=True)
+class ValidationResult:
+    valid: bool
+    reason: str | None = None
+
+
+def validate_markdown_upload(filename: str, content: bytes) -> ValidationResult:
+    if not filename.lower().endswith(".md"):
+        return ValidationResult(valid=False, reason="Only .md files are accepted")
+
+    if b"\x00" in content:
+        return ValidationResult(valid=False, reason="File contains binary content")
+
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return ValidationResult(valid=False, reason="File must be valid UTF-8 text")
+
+    if not text.strip():
+        return ValidationResult(valid=False, reason="File content is empty")
+
+    return ValidationResult(valid=True)
 
 
 class DocumentConflictError(Exception):

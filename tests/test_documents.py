@@ -7,8 +7,11 @@ from uuid import UUID
 import pytest
 
 from app.models import Document
-from app.services.document_validation import validate_markdown_upload
+from app.rag.events import DocumentStatusEvent
+from app.services.documents import validate_markdown_upload
 from app.services.system_user import create_system_user
+from app.services.job_status import handle_document_status_event
+
 
 
 def test_validate_rejects_non_md() -> None:
@@ -172,3 +175,38 @@ def test_status_reads_redis_first(
     payload = response.json()
     assert payload["step"] == "embedding"
     assert payload["steps"]["embedding"] == "in_progress"
+
+
+
+
+
+"""Tests for document status event handlers."""
+
+@patch("app.services.job_status.delete_job_status")
+@patch("app.services.job_status.set_job_step")
+def test_handle_document_status_event_in_progress(mock_set_step, mock_delete_status) -> None:
+    event = DocumentStatusEvent("doc-1", "chunking", "in_progress")
+    handle_document_status_event(event)
+
+    mock_set_step.assert_called_once_with("doc-1", "chunking", "in_progress")
+    mock_delete_status.assert_not_called()
+
+
+@patch("app.services.job_status.delete_job_status")
+@patch("app.services.job_status.set_job_step")
+def test_handle_document_status_event_success_terminal(mock_set_step, mock_delete_status) -> None:
+    event = DocumentStatusEvent("doc-1", "storing", "completed")
+    handle_document_status_event(event)
+
+    mock_set_step.assert_called_once_with("doc-1", "storing", "completed")
+    mock_delete_status.assert_called_once_with("doc-1")
+
+
+@patch("app.services.job_status.delete_job_status")
+@patch("app.services.job_status.set_job_step")
+def test_handle_document_status_event_failure_terminal(mock_set_step, mock_delete_status) -> None:
+    event = DocumentStatusEvent("doc-1", "failed", "completed")
+    handle_document_status_event(event)
+
+    mock_set_step.assert_not_called()
+    mock_delete_status.assert_called_once_with("doc-1")

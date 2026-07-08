@@ -5,9 +5,8 @@ from celery import Celery
 
 from app.config import get_settings
 from app.database import SessionLocal
-from app.rag.pipeline import process_document 
-
 from app.services.job_status import handle_document_status_event
+from app.services.rag import create_markdown_processor
 
 settings = get_settings()
 
@@ -31,10 +30,10 @@ def run_process_document(self, document_id: str) -> None:
     """Chunk, embed, and store a document."""
     db = SessionLocal()
     try:
-        process_document(
-            db, document_id,
-            chunk_max_tokens=settings.chunk_max_tokens,
-            chunk_overlap_percent=settings.chunk_overlap_percent,
+        processor = create_markdown_processor(settings)
+        processor.process_document(
+            db,
+            document_id,
             on_status=handle_document_status_event,
         )
     finally:
