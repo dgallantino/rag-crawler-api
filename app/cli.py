@@ -21,6 +21,34 @@ from app.services.system_user import (
 )
 
 
+def cmd_run_crawler(args: argparse.Namespace) -> int:
+    from app.crawler.pipeline import DataRetrieverError
+    from app.crawler.runner import count_crawl_results, run_crawl_debug
+    from app.crawler.settings import DEFAULT_MAX_PAGES
+
+    try:
+        results = run_crawl_debug(
+            args.url,
+            max_pages=args.max_pages,
+            headless=not args.no_headless,
+            job_id=args.job_id,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except DataRetrieverError as exc:
+        print(f"error: crawl pipeline failed: {exc}", file=sys.stderr)
+        return 1
+
+    for item in results:
+        if isinstance(item, str):
+            print(item)
+
+    pages, chunks = count_crawl_results(results)
+    print(f"\ncrawl complete: {pages} page(s), {chunks} chunk(s) printed", file=sys.stderr)
+    return 0
+
+
 def cmd_create_system_user(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
@@ -128,6 +156,37 @@ def main(argv: list[str] | None = None) -> int:
     status_parser.add_argument("--document-id", required=True, help="Document UUID")
     status_parser.add_argument("--name", required=True, help="System user name")
     status_parser.set_defaults(func=cmd_document_status)
+
+    from app.crawler.settings import DEFAULT_MAX_PAGES
+
+    crawler_parser = subparsers.add_parser(
+        "run-crawler",
+        help="Run the crawler pipeline locally for debugging (no DB required)",
+    )
+    crawler_parser.add_argument(
+        "--url",
+        action="append",
+        required=True,
+        dest="url",
+        help="Seed URL to crawl (repeatable)",
+    )
+    crawler_parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=DEFAULT_MAX_PAGES,
+        help=f"Maximum pages to crawl (default: {DEFAULT_MAX_PAGES})",
+    )
+    crawler_parser.add_argument(
+        "--no-headless",
+        action="store_true",
+        help="Run browser with a visible window",
+    )
+    crawler_parser.add_argument(
+        "--job-id",
+        default=None,
+        help="Optional correlation ID for logs",
+    )
+    crawler_parser.set_defaults(func=cmd_run_crawler)
 
     args = parser.parse_args(argv)
     return args.func(args)

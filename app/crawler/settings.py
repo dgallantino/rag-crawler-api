@@ -1,6 +1,7 @@
-"""Planned: Crawler configuration (user agent, timeouts, rate limits)."""
+"""Crawler configuration defaults."""
 
 USER_AGENT = "rag-crawler-api/0.1"
 REQUEST_TIMEOUT_SECONDS = 30
 
-# Future: implement fetch + parse logic with BeautifulSoup in a dedicated module.
+DEFAULT_MAX_PAGES = 20
+DEFAULT_HEADLESS = True

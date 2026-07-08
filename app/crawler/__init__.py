@@ -4,12 +4,13 @@ from .formatters import ChunkPrinter, DocFromCrawler, EmbeddingInputBuilder
 from .pipeline import BaseStage, DataRetrieverError, Item, Pipeline, StageContext
 from .schemas import CrawlerData, EmbeddingInput, PageChunk
 from .sources import JSCrawler
-from .storage import FileStorage
+from .storage import DBStorage, FileStorage
 
 __all__ = [
     "BaseStage",
     "ChunkPrinter",
     "CrawlerData",
+    "DBStorage",
     "DOMChunker",
     "DataRetrieverError",
     "DocFromCrawler",

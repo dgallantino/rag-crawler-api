@@ -179,5 +179,6 @@ These classes work today but do not fully match the intended design. Refactor to
 | `filters.py` | Drop items |
 | `formatters.py` | Reshape for output or downstream consumers |
 | `storage.py` | Persistence sinks |
+| `runner.py` | **CLI-only** dev helper — do not import from production code |
 
 When a module grows many stages, prefer splitting by responsibility (e.g. `chunking.py`, `html_cleanup.py`) over adding more classes to an already large file.

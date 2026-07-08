@@ -10,8 +10,8 @@ A scaffold for a web-crawling and RAG (Retrieval-Augmented Generation) API. This
 | Validation | Pydantic |
 | Database | SQLAlchemy + PostgreSQL |
 | Background jobs | Celery + Redis |
-| Crawler | Custom (BeautifulSoup + httpx, stub) |
-| RAG | Custom pipeline (stub) |
+| Crawler | Custom pipeline (Playwright + BeautifulSoup) |
+| RAG | Custom pipeline |
 | Tests | pytest |
 
 ## Project Structure
@@ -27,8 +27,8 @@ app/
 ├── utils.py         # Shared helpers
 ├── api/             # HTTP route handlers
 ├── schemas/         # Pydantic request/response models
-├── crawler/         # Custom crawler config (stub)
-└── rag/             # RAG pipeline (stub)
+├── crawler/         # Composable crawl pipeline library
+└── rag/             # RAG pipeline
 tests/               # pytest suite
 ```
 
@@ -38,6 +38,7 @@ tests/               # pytest suite
 cd rag-crawler-api
 source venv/bin/activate
 pip install -r requirements.txt
+playwright install chromium
 cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
@@ -68,9 +69,22 @@ pytest
 | FastAPI app + health endpoint | Working |
 | Settings from `.env` | Working |
 | SQLAlchemy models + session | Stub (tables auto-created in dev) |
-| Celery tasks | Stub (placeholder tasks) |
-| Custom crawler | Stub (settings only) |
-| RAG pipeline | Stub (`NotImplementedError`) |
+| Celery tasks | Partial (process_document working; crawl_url scaffold) |
+| Custom crawler | Pipeline library (CLI debug available) |
+| RAG pipeline | Working (chunk, embed, store) |
+
+## Crawler CLI (local debugging)
+
+Run the default pipeline (`JSCrawler → DOMChunker → ChunkPrinter`) without DB or API keys:
+
+```bash
+python -m app.cli run-crawler --url https://example.com
+python -m app.cli run-crawler --url https://example.com --max-pages 5 --no-headless
+```
+
+Requires `playwright install chromium` after `pip install`.
+
+Production code should compose `Pipeline([...])` directly (see `app/services/crawl.py`), not import `app/crawler/runner.py`.
 
 ## Developer Notes — Planned Work (by priority)
 
@@ -78,9 +92,9 @@ pytest
 
 Replace `Base.metadata.create_all()` with versioned migrations. Set up Alembic, generate an initial migration for the `Document` model, and wire `alembic upgrade head` into Docker startup. This is the foundation for any schema changes.
 
-### 2. Custom crawler implementation
+### 2. Custom crawler integration
 
-Add fetch-and-parse logic under `app/crawler/` using httpx (or requests) and BeautifulSoup. Connect the `crawl_url` Celery task to fetch pages, extract content, and persist results to the `Document` model. Add rate limiting, robots.txt checks, and HTML cleaning as needed.
+Wire `DBStorage` to persist crawled pages to the `Document` model and chain `trigger_process_document`. Add `POST /crawl` API route. See `app/services/crawl.py` for the production pipeline skeleton.
 
 ### 3. RAG pipeline
 

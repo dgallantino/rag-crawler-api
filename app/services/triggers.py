@@ -3,9 +3,9 @@
 from app.jobs import crawl_url, process_document
 
 
-def trigger_crawl(url: str) -> str:
+def trigger_crawl(url: str, system_user_id: str | None = None) -> str:
     """Queue a crawl job for the given URL."""
-    result = crawl_url.delay(url)
+    result = crawl_url.delay(url, system_user_id=system_user_id)
     return result.id
 
 
