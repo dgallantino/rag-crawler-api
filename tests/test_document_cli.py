@@ -6,18 +6,20 @@ from unittest.mock import MagicMock, patch
 
 from app.cli import cmd_document_status, cmd_upload_document
 from app.models import Document
+from app.services.collections import create_collection
 from app.services.system_user import create_system_user
 
 
 @patch("app.services.documents.trigger_process_document")
 def test_cli_upload_document(mock_trigger, tmp_path, db_session, monkeypatch, capsys) -> None:
     monkeypatch.setattr("app.cli.SessionLocal", MagicMock(return_value=db_session))
-    create_system_user(db_session, name="Dev User")
+    user, _ = create_system_user(db_session, name="Dev User")
+    create_collection(db_session, user, name="Dev Docs", slug="dev-docs")
 
     md_file = tmp_path / "notes.md"
     md_file.write_text("# Notes\n\nHello.", encoding="utf-8")
 
-    args = argparse.Namespace(path=str(md_file), name="Dev User")
+    args = argparse.Namespace(path=str(md_file), name="Dev User", collection_slug="dev-docs")
     assert cmd_upload_document(args) == 0
     mock_trigger.assert_called_once()
 
@@ -33,7 +35,7 @@ def test_cli_upload_document_invalid_file(tmp_path, db_session, monkeypatch, cap
     bad_file = tmp_path / "notes.txt"
     bad_file.write_text("hello", encoding="utf-8")
 
-    args = argparse.Namespace(path=str(bad_file), name="Dev User")
+    args = argparse.Namespace(path=str(bad_file), name="Dev User", collection_slug="dev-docs")
     assert cmd_upload_document(args) == 1
     assert "Only .md files are accepted" in capsys.readouterr().err
 
@@ -41,8 +43,9 @@ def test_cli_upload_document_invalid_file(tmp_path, db_session, monkeypatch, cap
 def test_cli_document_status(db_session, monkeypatch, capsys) -> None:
     monkeypatch.setattr("app.cli.SessionLocal", MagicMock(return_value=db_session))
     user, _ = create_system_user(db_session, name="Dev User")
+    collection = create_collection(db_session, user, name="Dev Docs", slug="dev-docs")
     document = Document(
-        system_user_id=user.id,
+        collection_id=collection.id,
         url="file://notes.md",
         title="notes.md",
         content="# Notes",

@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Document, SystemUser
+from app.models import Collection, Document, SystemUser
 from app.schemas.documents import DocumentStatusResponse
 from app.services import job_status
 from app.services.triggers import trigger_process_document
@@ -46,7 +46,7 @@ class DocumentNotFoundError(Exception):
 
 def create_document_upload(
     db: Session,
-    user: SystemUser,
+    collection: Collection,
     filename: str,
     content: str,
 ) -> Document:
@@ -55,15 +55,15 @@ def create_document_upload(
 
     This function will:
     - Attempt to create a new Document with the given filename and content,
-      associated with the provided system user.
-    - If a document with the same filename for the user already exists, it will raise
+      associated with the provided collection.
+    - If a document with the same filename for the collection already exists, it will raise
       DocumentConflictError.
     - On success, commits the new document, triggers the background processing job,
       and returns the created Document object.
 
     Args:
         db (Session): SQLAlchemy database session.
-        user (SystemUser): The user uploading the document.
+        collection (Collection): The collection the document belongs to.
         filename (str): Name of the uploaded file.
         content (str): Raw content of the file.
 
@@ -71,10 +71,10 @@ def create_document_upload(
         Document: The SQLAlchemy Document instance just created.
 
     Raises:
-        DocumentConflictError: If a document with the same filename already exists.
+        DocumentConflictError: If a document with the same filename already exists in the collection.
     """
     document = Document(
-        system_user_id=user.id,
+        collection_id=collection.id,
         title=filename,
         url=f"file://{filename}",
         content=content,
@@ -117,7 +117,8 @@ def get_document_status(
     """
     document = (
         db.query(Document)
-        .filter(Document.id == document_id, Document.system_user_id == user.id)
+        .join(Collection, Document.collection_id == Collection.id)
+        .filter(Document.id == document_id, Collection.system_user_id == user.id)
         .one_or_none()
     )
     if document is None:

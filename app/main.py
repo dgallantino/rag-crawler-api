@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from app.api.collections import router as collections_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.config import get_settings
@@ -38,6 +39,7 @@ app = FastAPI(
 )
 
 app.include_router(health_router)
+app.include_router(collections_router)
 app.include_router(documents_router)
 
 @app.get("/", response_model=MessageResponse)

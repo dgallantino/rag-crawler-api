@@ -67,7 +67,7 @@ def test_cli_create_system_user(db_session, api_key_secret: str, monkeypatch, ca
     session_factory = MagicMock(return_value=db_session)
     monkeypatch.setattr("app.cli.SessionLocal", session_factory)
 
-    args = argparse.Namespace(name="CLI Tenant", ratelimit=150)
+    args = argparse.Namespace(name="CLI Tenant", ratelimit=150, collection=None)
     assert cmd_create_system_user(args) == 0
 
     output = json.loads(capsys.readouterr().out)
@@ -76,6 +76,7 @@ def test_cli_create_system_user(db_session, api_key_secret: str, monkeypatch, ca
     assert output["api_key"]
     assert output["id"]
     assert output["created_at"]
+    assert output["collections"] == []
 
 
 def test_cli_main_create_system_user(db_session, api_key_secret: str, monkeypatch, capsys) -> None:
@@ -87,3 +88,4 @@ def test_cli_main_create_system_user(db_session, api_key_secret: str, monkeypatc
     output = json.loads(capsys.readouterr().out)
     assert output["name"] == "Main Tenant"
     assert output["ratelimit"] == 100
+    assert output["collections"] == []

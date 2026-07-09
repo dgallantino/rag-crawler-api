@@ -34,15 +34,15 @@ class DBStorage(BaseStage):
     Sink: Item[EmbeddingInput] → Item[EmbeddingInput] (persists to Document).
 
     Intended behaviour:
-    - Upsert a Document row per crawled page URL for the given system_user_id
+    - Upsert a Document row per crawled page URL for the given collection_id
     - Set document.status to "pending"
     - Caller triggers trigger_process_document() after the pipeline completes
     """
 
-    def __init__(self, db: Session, system_user_id: UUID) -> None:
+    def __init__(self, db: Session, collection_id: UUID) -> None:
         super().__init__()
         self.db = db
-        self.system_user_id = system_user_id
+        self.collection_id = collection_id
 
     def run(
         self,

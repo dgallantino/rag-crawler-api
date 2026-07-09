@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -13,6 +13,7 @@ from app.schemas.documents import (
     DocumentUploadResponse,
     DocumentValidationErrorResponse,
 )
+from app.services.collections import CollectionNotFoundError, get_collection
 from app.services.documents import validate_markdown_upload
 from app.services.documents import (
     DocumentConflictError,
@@ -32,6 +33,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 )
 async def upload_document(
     file: UploadFile = File(...),
+    collection_id: UUID = Form(...),
     user: SystemUser = Depends(get_current_system_user),
     db: Session = Depends(get_db),
 ) -> DocumentUploadResponse:
@@ -46,9 +48,17 @@ async def upload_document(
         )
 
     try:
+        collection = get_collection(db, user, collection_id)
+    except CollectionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Collection {collection_id} not found",
+        ) from exc
+
+    try:
         document = create_document_upload(
             db,
-            user,
+            collection,
             filename,
             content.decode("utf-8"),
         )

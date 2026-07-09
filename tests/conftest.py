@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
+from app.services.collections import create_collection
 from app.services.system_user import create_system_user
 
 
@@ -60,6 +61,12 @@ def db_session(db_engine):
 def test_user(db_session, api_key_secret: str):
     user, api_key = create_system_user(db_session, name="Test Tenant")
     return user, api_key
+
+
+@pytest.fixture
+def test_collection(db_session, test_user):
+    user, _ = test_user
+    return create_collection(db_session, user, name="Test Collection", slug="test-collection")
 
 
 @pytest.fixture
