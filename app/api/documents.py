@@ -41,7 +41,7 @@ async def upload_document(
     validation = validate_markdown_upload(filename, content)
     if not validation.valid:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"accepted": False, "reason": validation.reason},
         )
 
