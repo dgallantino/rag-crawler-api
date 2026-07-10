@@ -14,7 +14,7 @@ from app.services.system_user import create_system_user
 def test_upload_valid_document(mock_trigger, client, auth_headers, db_session, test_user, test_collection) -> None:
     user, _ = test_user
     response = client.post(
-        "/documents",
+        "/v1/documents",
         headers=auth_headers,
         data={"collection_id": str(test_collection.id)},
         files={"file": ("guide.md", b"# Guide\n\nHello world.", "text/markdown")},
@@ -39,7 +39,7 @@ def test_upload_invalid_document_not_persisted(
     mock_trigger, client, auth_headers, db_session, test_collection
 ) -> None:
     response = client.post(
-        "/documents",
+        "/v1/documents",
         headers=auth_headers,
         data={"collection_id": str(test_collection.id)},
         files={"file": ("guide.txt", b"hello", "text/plain")},
@@ -53,7 +53,7 @@ def test_upload_invalid_document_not_persisted(
 
 def test_upload_requires_auth(client, test_collection) -> None:
     response = client.post(
-        "/documents",
+        "/v1/documents",
         data={"collection_id": str(test_collection.id)},
         files={"file": ("guide.md", b"# Guide", "text/markdown")},
     )
@@ -75,7 +75,7 @@ def test_upload_duplicate_filename_returns_409(
     db_session.commit()
 
     response = client.post(
-        "/documents",
+        "/v1/documents",
         headers=auth_headers,
         data={"collection_id": str(test_collection.id)},
         files={"file": ("guide.md", b"# New", "text/markdown")},
@@ -98,7 +98,7 @@ def test_status_returns_queued_before_worker(
     db_session.add(document)
     db_session.commit()
 
-    response = client.get(f"/documents/{document.id}/status", headers=auth_headers)
+    response = client.get(f"/v1/documents/{document.id}/status", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json()["status"] == "queued"
@@ -116,7 +116,7 @@ def test_status_not_found_for_other_tenant(client, auth_headers, db_session, tes
     db_session.add(document)
     db_session.commit()
 
-    response = client.get(f"/documents/{document.id}/status", headers=auth_headers)
+    response = client.get(f"/v1/documents/{document.id}/status", headers=auth_headers)
     assert response.status_code == 404
 
 
@@ -143,7 +143,7 @@ def test_status_reads_redis_first(
         },
     }
 
-    response = client.get(f"/documents/{document.id}/status", headers=auth_headers)
+    response = client.get(f"/v1/documents/{document.id}/status", headers=auth_headers)
 
     assert response.status_code == 200
     payload = response.json()

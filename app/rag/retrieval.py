@@ -18,23 +18,16 @@ from sqlalchemy.orm import Session
 
 from app.models import DocumentChunk
 
-if TYPE_CHECKING:
-    from app.rag.generation import RagResponse  # avoids circular import at module load time
-
 
 EmbedFn = Callable[[str], list[float]]
 
 
 @dataclass
-class ScoredChunk:
-    """A DocumentChunk plus its retrieval-stage similarity score.
-
-    Shared across retrieval -> rerank -> generation so those modules never
-    need to touch the ORM model directly for scoring.
-    """
+class RetrievedChunk:
+    """A DocumentChunk plus its retrieval-stage similarity score."""
 
     chunk: DocumentChunk
-    score: float  # similarity in [0, 1], 1 = identical
+    similarity_score: float  # similarity in [0, 1], 1 = identical
 
 
 def embed_query(query: str, embed_fn: EmbedFn) -> list[float]:
@@ -54,7 +47,7 @@ def vector_search(
     top_k: int,
     filters: dict | None,
     collection: str | None,
-) -> list[ScoredChunk]:
+) -> list[RetrievedChunk]:
     """Run a pgvector similarity search and return the top_k chunks."""
     stmt = (
         select(
@@ -72,7 +65,10 @@ def vector_search(
         stmt = _apply_filters(stmt, filters)
 
     rows = session.execute(stmt).all()
-    return [ScoredChunk(chunk=row[0], score=_distance_to_score(row[1])) for row in rows]
+    return [
+        RetrievedChunk(chunk=row[0], similarity_score=_distance_to_score(row[1]))
+        for row in rows
+    ]
 
 
 def _apply_filters(stmt, filters: dict):
@@ -120,14 +116,11 @@ def retrieve(
     query: str,
     top_k: int,
     filters: dict | None,
-    rerank: bool,
     collection: str | None,
     *,
     session: Session,
     embed_fn: EmbedFn,
-    completion_client,
-    completion_model: str,
-) -> RagResponse:
+) -> list[RetrievedChunk]:
     """Entry point matching the service-layer stub, minus `user_id`.
 
     Orchestrates retrieval -> optional rerank -> generation. This is the
@@ -136,34 +129,15 @@ def retrieve(
     When rerank=True, fetches top_k * 4 candidates from vector search
     before reranking down to top_k.
     """
-    from app.rag.rerank import rerank as rerank_chunks  # local import avoids cycle
-    from app.rag.generation import answer_with_retrieval
 
     query_vector = embed_query(query, embed_fn)
-    fetch_k = top_k * 4 if rerank else top_k
 
     candidates = vector_search(
         session,
         query_vector,
-        top_k=fetch_k,
+        top_k=top_k,
         filters=filters,
         collection=collection,
     )
 
-    if rerank:
-        candidates = rerank_chunks(
-            query,
-            candidates,
-            completion_client,
-            top_k=top_k,
-            completion_model=completion_model,
-        )
-    else:
-        candidates = candidates[:top_k]
-
-    return answer_with_retrieval(
-        query,
-        candidates,
-        completion_client,
-        completion_model=completion_model,
-    )
+    return candidates

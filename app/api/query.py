@@ -15,7 +15,7 @@ from openai import RateLimitError
 
 from app.dependencies.bearer import require_bearer_token
 from app.schemas.query import BackendQueryRequest, RetrievalResult
-from app.services.rag import retrieve
+from app.services.rag import rag
 from app.services.rate_limit import check_rate_limit
 from app.services.tenant_cache import get_redis_client
 
@@ -73,12 +73,12 @@ def query_backend(body: BackendQueryRequest, request: Request) -> RetrievalResul
 
     filters = body.filters.model_dump(exclude_none=True) if body.filters else None
 
-    result = retrieve(
+    result = rag(
         user_id=body.user_id,
         query=body.query,
         top_k=body.top_k,
         filters=filters,
-        rerank=body.rerank,
+        with_rerank=body.rerank,
         collection=body.collection,
     )
 

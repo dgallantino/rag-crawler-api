@@ -1,35 +1,34 @@
-"""Tests for RAG retrieval, rerank, and generation modules.
+"""Tests for RAG retrieval and generation modules.
 
-All tests use mocked embed_fn and completion_client — no live API calls.
+Uses mocked embed/completion clients — no live API calls.
+vector_search uses mocked session.execute because pgvector operators
+require Postgres; _apply_filters runs against the real sqlite test DB.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import date, datetime
 from unittest.mock import MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 
 from app.models import Document, DocumentChunk
-from app.rag.rerank import (
-    _assign_rank_scores,
-    _build_rerank_prompt,
-    _parse_rerank_response,
-    rerank,
-)
-from app.rag.retrieval import (
-    ScoredChunk,
-    _apply_filters,
-    _distance_to_score,
-    retrieve,
-)
 from app.rag.generation import (
+    ScoredChunk,
     answer_with_retrieval,
     build_context,
     generate_answer,
+    normalize_chunks,
+)
+from app.rag.retrieval import (
+    RetrievedChunk,
+    _apply_filters,
+    _distance_to_score,
+    embed_query,
+    retrieve,
+    vector_search,
 )
 
 
@@ -37,19 +36,11 @@ def fake_embed_fn(_query: str) -> list[float]:
     return [0.0] * 1536
 
 
-def fake_completion_client(
-    rerank_ids: list[str] | None = None,
-    answer: str = "Mock answer",
-) -> MagicMock:
+def fake_completion_client(answer: str = "Mock answer") -> MagicMock:
     mock = MagicMock()
 
     def create(*, model, messages, **kwargs):
-        content = messages[-1]["content"]
-        if rerank_ids is not None and "Rank the following" in content:
-            body = json.dumps(rerank_ids)
-        else:
-            body = answer
-        return MagicMock(choices=[MagicMock(message=MagicMock(content=body))])
+        return MagicMock(choices=[MagicMock(message=MagicMock(content=answer))])
 
     mock.chat.completions.create = create
     return mock
@@ -87,11 +78,26 @@ def _make_chunk(
     return chunk
 
 
+def _retrieved(chunk: DocumentChunk, similarity_score: float = 0.9) -> RetrievedChunk:
+    return RetrievedChunk(chunk=chunk, similarity_score=similarity_score)
+
+
 def _scored(chunk: DocumentChunk, score: float = 0.9) -> ScoredChunk:
     return ScoredChunk(chunk=chunk, score=score)
 
 
-# --- retrieval.py ---
+def _mock_execute(session, rows: list[tuple[object, float]]) -> None:
+    session.execute = MagicMock(return_value=MagicMock(all=lambda: rows))
+
+
+def _mock_chunk(content: str = "chunk content") -> MagicMock:
+    chunk = MagicMock()
+    chunk.id = uuid4()
+    chunk.content = content
+    return chunk
+
+
+# --- retrieval.py: _distance_to_score ---
 
 
 def test_distance_to_score_clamps():
@@ -99,6 +105,9 @@ def test_distance_to_score_clamps():
     assert _distance_to_score(1.0) == 0.0
     assert _distance_to_score(1.5) == 0.0
     assert _distance_to_score(-0.2) == 1.0
+
+
+# --- retrieval.py: _apply_filters ---
 
 
 def test_apply_filters_metadata_scalar(db_session, test_collection):
@@ -123,12 +132,37 @@ def test_apply_filters_metadata_scalar(db_session, test_collection):
     assert rows[0].id == match.id
 
 
+def test_apply_filters_metadata_applies_one_clause_per_key(db_session, test_collection):
+    """Each metadata key becomes its own .contains() where clause."""
+    _make_chunk(
+        db_session,
+        test_collection,
+        metadata={"doc_type": "contract", "region": "eu"},
+    )
+
+    stmt = select(DocumentChunk)
+    stmt = _apply_filters(
+        stmt,
+        {"metadata": {"doc_type": "contract", "region": "eu"}},
+    )
+    where_sql = " ".join(str(clause) for clause in stmt._where_criteria)
+
+    assert "metadata" in where_sql
+    assert len(stmt._where_criteria) == 2
+
+
 def test_apply_filters_date_range(db_session, test_collection):
     early = _make_chunk(
         db_session,
         test_collection,
         content="early",
         created_at=datetime(2024, 1, 10, 0, 0, 0),
+    )
+    mid = _make_chunk(
+        db_session,
+        test_collection,
+        content="mid",
+        created_at=datetime(2024, 6, 15, 12, 0, 0),
     )
     _make_chunk(
         db_session,
@@ -143,19 +177,63 @@ def test_apply_filters_date_range(db_session, test_collection):
         {"date_range": {"after": date(2024, 6, 1), "before": date(2024, 6, 30)}},
     )
     rows = db_session.execute(stmt).scalars().all()
-
-    assert len(rows) == 0  # early is Jan, late is Dec — neither in June
+    assert len(rows) == 1
+    assert rows[0].id == mid.id
 
     stmt = select(DocumentChunk)
     stmt = _apply_filters(stmt, {"date_range": {"after": date(2024, 1, 1)}})
     rows = db_session.execute(stmt).scalars().all()
-    assert len(rows) == 2
+    assert len(rows) == 3
 
     stmt = select(DocumentChunk)
     stmt = _apply_filters(stmt, {"date_range": {"before": date(2024, 2, 1)}})
     rows = db_session.execute(stmt).scalars().all()
     assert len(rows) == 1
     assert rows[0].id == early.id
+
+
+def test_apply_filters_date_range_accepts_datetime(db_session, test_collection):
+    boundary = _make_chunk(
+        db_session,
+        test_collection,
+        content="boundary",
+        created_at=datetime(2024, 6, 1, 15, 30, 0),
+    )
+
+    stmt = select(DocumentChunk)
+    stmt = _apply_filters(
+        stmt,
+        {
+            "date_range": {
+                "after": datetime(2024, 6, 1, 0, 0, 0),
+                "before": datetime(2024, 6, 1, 23, 59, 59),
+            }
+        },
+    )
+    rows = db_session.execute(stmt).scalars().all()
+
+    assert len(rows) == 1
+    assert rows[0].id == boundary.id
+
+
+def test_apply_filters_date_only_expands_to_day_bounds(db_session, test_collection):
+    """Plain date values should cover the full calendar day."""
+    on_day = _make_chunk(
+        db_session,
+        test_collection,
+        content="on day",
+        created_at=datetime(2024, 6, 15, 23, 59, 59),
+    )
+
+    stmt = select(DocumentChunk)
+    stmt = _apply_filters(
+        stmt,
+        {"date_range": {"after": date(2024, 6, 15), "before": date(2024, 6, 15)}},
+    )
+    rows = db_session.execute(stmt).scalars().all()
+
+    assert len(rows) == 1
+    assert rows[0].id == on_day.id
 
 
 def test_apply_filters_owner_ref_skipped(db_session, test_collection):
@@ -167,138 +245,231 @@ def test_apply_filters_owner_ref_skipped(db_session, test_collection):
     assert rows[0].id == chunk.id
 
 
-def test_collection_uuid_filter(db_session, test_collection, test_user):
-    """Collection scoping uses UUID cast (pgvector search requires Postgres)."""
-    from uuid import UUID
+def test_apply_filters_combined_metadata_and_date(db_session, test_collection):
+    match = _make_chunk(
+        db_session,
+        test_collection,
+        content="match",
+        metadata={"doc_type": "contract"},
+        created_at=datetime(2024, 6, 10, 0, 0, 0),
+    )
+    _make_chunk(
+        db_session,
+        test_collection,
+        content="wrong type",
+        metadata={"doc_type": "memo"},
+        created_at=datetime(2024, 6, 10, 0, 0, 0),
+    )
+    _make_chunk(
+        db_session,
+        test_collection,
+        content="wrong date",
+        metadata={"doc_type": "contract"},
+        created_at=datetime(2024, 1, 1, 0, 0, 0),
+    )
 
-    from app.services.collections import create_collection
-
-    user, _ = test_user
-    other_collection = create_collection(db_session, user, name="Other", slug="other-col")
-    in_collection = _make_chunk(db_session, test_collection, content="in scope")
-    _make_chunk(db_session, other_collection, content="out of scope")
-
-    stmt = select(DocumentChunk).where(
-        DocumentChunk.collection_id == UUID(str(test_collection.id))
+    stmt = select(DocumentChunk)
+    stmt = _apply_filters(
+        stmt,
+        {
+            "metadata": {"doc_type": "contract"},
+            "date_range": {"after": date(2024, 6, 1)},
+        },
     )
     rows = db_session.execute(stmt).scalars().all()
 
     assert len(rows) == 1
-    assert rows[0].id == in_collection.id
+    assert rows[0].id == match.id
 
 
-# --- rerank.py ---
+def test_apply_filters_empty_dict_is_noop(db_session, test_collection):
+    chunk = _make_chunk(db_session, test_collection, content="any")
+    stmt = select(DocumentChunk)
+    stmt = _apply_filters(stmt, {})
+    rows = db_session.execute(stmt).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].id == chunk.id
 
 
-def test_build_rerank_prompt_includes_ids_and_query():
-    chunk = MagicMock()
-    chunk.id = uuid4()
-    chunk.content = "Some content about SLAs"
-    candidates = [_scored(chunk)]
-
-    prompt = _build_rerank_prompt("What is the SLA?", candidates)
-
-    assert "What is the SLA?" in prompt
-    assert str(chunk.id) in prompt
-    assert "Some content about SLAs" in prompt
-    assert "JSON array" in prompt
+# --- retrieval.py: vector_search ---
 
 
-def test_parse_rerank_response_json_array():
-    response = MagicMock(
-        choices=[MagicMock(message=MagicMock(content='["id-1", "id-2"]'))]
-    )
-    chunk = MagicMock()
-    chunk.id = "fallback"
-    candidates = [_scored(chunk)]
+def test_vector_search_maps_distance_to_similarity_score(db_session):
+    chunk_a = _mock_chunk("Alpha")
+    chunk_b = _mock_chunk("Beta")
+    _mock_execute(db_session, [(chunk_a, 0.1), (chunk_b, 0.4)])
 
-    assert _parse_rerank_response(response, candidates) == ["id-1", "id-2"]
-
-
-def test_parse_rerank_response_strips_code_fence():
-    response = MagicMock(
-        choices=[
-            MagicMock(message=MagicMock(content='```json\n["a", "b"]\n```'))
-        ]
-    )
-    chunk = MagicMock()
-    chunk.id = "x"
-    candidates = [_scored(chunk)]
-
-    assert _parse_rerank_response(response, candidates) == ["a", "b"]
-
-
-def test_parse_rerank_response_fallback_on_invalid_json():
-    chunk_a = MagicMock()
-    chunk_a.id = uuid4()
-    chunk_b = MagicMock()
-    chunk_b.id = uuid4()
-    candidates = [_scored(chunk_a), _scored(chunk_b)]
-
-    response = MagicMock(choices=[MagicMock(message=MagicMock(content="not json"))])
-    result = _parse_rerank_response(response, candidates)
-
-    assert result == [str(chunk_a.id), str(chunk_b.id)]
-
-
-def test_assign_rank_scores():
-    chunks = [MagicMock(), MagicMock(), MagicMock()]
-    scored = [_scored(c, 0.5) for c in chunks]
-    ranked = _assign_rank_scores(scored)
-
-    assert ranked[0].score == 1.0
-    assert ranked[-1].score == 0.0
-    assert len(ranked) == 3
-
-
-def test_rerank_reorders_by_model(db_session, test_collection):
-    first = _make_chunk(db_session, test_collection, content="first")
-    second = _make_chunk(db_session, test_collection, content="second")
-    third = _make_chunk(db_session, test_collection, content="third")
-
-    candidates = [
-        _scored(first, 0.9),
-        _scored(second, 0.8),
-        _scored(third, 0.7),
-    ]
-    rerank_order = [str(third.id), str(first.id), str(second.id)]
-    client = fake_completion_client(rerank_ids=rerank_order)
-
-    result = rerank(
-        "query",
-        candidates,
-        client,
+    results = vector_search(
+        db_session,
+        [0.0] * 1536,
         top_k=2,
-        completion_model="test-model",
+        filters=None,
+        collection=None,
     )
 
-    assert len(result) == 2
-    assert result[0].chunk.id == third.id
-    assert result[1].chunk.id == first.id
-    assert result[0].score == 1.0
+    assert len(results) == 2
+    assert results[0].chunk is chunk_a
+    assert results[0].similarity_score == pytest.approx(0.9)
+    assert results[1].chunk is chunk_b
+    assert results[1].similarity_score == pytest.approx(0.6)
 
 
-def test_rerank_fallback_on_client_error(db_session, test_collection):
-    chunk = _make_chunk(db_session, test_collection, content="only")
-    candidates = [_scored(chunk, 0.9)]
+def test_vector_search_respects_top_k(db_session):
+    chunks = [_mock_chunk(f"chunk-{i}") for i in range(3)]
+    _mock_execute(db_session, [(chunk, float(i) * 0.1) for i, chunk in enumerate(chunks)])
 
-    client = MagicMock()
-    client.chat.completions.create.side_effect = RuntimeError("API down")
-
-    result = rerank(
-        "query",
-        candidates,
-        client,
-        top_k=1,
-        completion_model="test-model",
+    vector_search(
+        db_session,
+        [0.0] * 1536,
+        top_k=2,
+        filters=None,
+        collection=None,
     )
 
-    assert len(result) == 1
-    assert result[0].chunk.id == chunk.id
-    assert result[0].score == 0.9
+    db_session.execute.assert_called_once()
+    compiled = db_session.execute.call_args[0][0]
+    assert compiled._limit_clause.value == 2  # type: ignore[attr-defined]
+
+
+def test_vector_search_scopes_by_collection(db_session, test_collection):
+    in_collection_id = str(test_collection.id)
+    _mock_execute(db_session, [])
+
+    vector_search(
+        db_session,
+        [0.0] * 1536,
+        top_k=5,
+        filters=None,
+        collection=in_collection_id,
+    )
+
+    stmt = db_session.execute.call_args[0][0]
+    where_clauses = list(stmt._where_criteria)
+    assert len(where_clauses) == 1
+    assert "collection_id" in str(where_clauses[0])
+    assert where_clauses[0].right.value == UUID(in_collection_id)
+
+
+def test_vector_search_applies_filters(db_session, test_collection, monkeypatch):
+    apply_calls: list[dict] = []
+    original_apply = _apply_filters
+
+    def spy(stmt, filters):
+        apply_calls.append(filters)
+        return original_apply(stmt, filters)
+
+    monkeypatch.setattr("app.rag.retrieval._apply_filters", spy)
+    _mock_execute(db_session, [])
+
+    filters = {"metadata": {"doc_type": "contract"}}
+    vector_search(
+        db_session,
+        [0.0] * 1536,
+        top_k=5,
+        filters=filters,
+        collection=None,
+    )
+
+    assert apply_calls == [filters]
+
+
+def test_vector_search_with_metadata_filter(db_session, test_collection, monkeypatch):
+    match = _mock_chunk("contract")
+    other = _mock_chunk("memo")
+    _mock_execute(db_session, [(match, 0.2), (other, 0.1)])
+
+    apply_calls: list[dict] = []
+    original_apply = _apply_filters
+
+    def spy(stmt, filters):
+        apply_calls.append(filters)
+        return original_apply(stmt, filters)
+
+    monkeypatch.setattr("app.rag.retrieval._apply_filters", spy)
+
+    vector_search(
+        db_session,
+        [0.0] * 1536,
+        top_k=5,
+        filters={"metadata": {"doc_type": "contract"}},
+        collection=str(test_collection.id),
+    )
+
+    assert apply_calls == [{"metadata": {"doc_type": "contract"}}]
+    assert len(db_session.execute.return_value.all()) == 2
+
+
+def test_vector_search_returns_empty_when_no_rows(db_session):
+    _mock_execute(db_session, [])
+
+    results = vector_search(
+        db_session,
+        [0.0] * 1536,
+        top_k=5,
+        filters=None,
+        collection=None,
+    )
+
+    assert results == []
+
+
+# --- retrieval.py: embed_query / retrieve ---
+
+
+def test_embed_query_delegates_to_embed_fn():
+    called_with: list[str] = []
+
+    def embed_fn(text: str) -> list[float]:
+        called_with.append(text)
+        return [1.0, 2.0]
+
+    assert embed_query("hello", embed_fn) == [1.0, 2.0]
+    assert called_with == ["hello"]
+
+
+def test_retrieve_embeds_and_searches(db_session, test_collection, monkeypatch):
+    chunk = _make_chunk(db_session, test_collection, content="Alpha content")
+    captured: dict = {}
+
+    def mock_vector_search(session, query_vector, *, top_k, filters, collection):
+        captured["query_vector"] = query_vector
+        captured["top_k"] = top_k
+        captured["filters"] = filters
+        captured["collection"] = collection
+        return [_retrieved(chunk, 0.85)]
+
+    monkeypatch.setattr("app.rag.retrieval.vector_search", mock_vector_search)
+
+    results = retrieve(
+        query="Which chunk?",
+        top_k=2,
+        filters={"metadata": {"doc_type": "contract"}},
+        collection=str(test_collection.id),
+        session=db_session,
+        embed_fn=fake_embed_fn,
+    )
+
+    assert len(results) == 1
+    assert results[0].chunk.id == chunk.id
+    assert results[0].similarity_score == 0.85
+    assert captured["query_vector"] == [0.0] * 1536
+    assert captured["top_k"] == 2
+    assert captured["filters"] == {"metadata": {"doc_type": "contract"}}
+    assert captured["collection"] == str(test_collection.id)
 
 
 # --- generation.py ---
+
+
+def test_normalize_chunks_from_retrieved(db_session, test_collection):
+    chunk = _make_chunk(db_session, test_collection, content="body")
+    retrieved = [_retrieved(chunk, 0.75)]
+
+    normalized = normalize_chunks(retrieved)
+
+    assert len(normalized) == 1
+    assert normalized[0].chunk.id == chunk.id
+    assert normalized[0].score == 0.75
 
 
 def test_build_context_orders_by_score_and_tags():
@@ -324,10 +495,7 @@ def test_build_context_deduplicates_content():
     chunk.chunk_index = 0
     chunk.content = "duplicate text"
 
-    dup_a = _scored(chunk, 0.9)
-    dup_b = _scored(chunk, 0.5)
-
-    context = build_context([dup_a, dup_b])
+    context = build_context([_scored(chunk, 0.9), _scored(chunk, 0.5)])
     assert context.count("duplicate text") == 1
 
 
@@ -365,8 +533,12 @@ def test_generate_answer_handles_none_content():
     assert result == ""
 
 
-def test_answer_with_retrieval_returns_rag_response(db_session, test_collection):
-    chunk = _make_chunk(db_session, test_collection, content="SLA is 99.9%")
+def test_answer_with_retrieval_returns_rag_response():
+    chunk = MagicMock()
+    chunk.id = uuid4()
+    chunk.document_id = uuid4()
+    chunk.chunk_index = [0]
+    chunk.content = "SLA is 99.9%"
     scored = [_scored(chunk, 0.95)]
     client = fake_completion_client(answer="The SLA is 99.9%")
 
@@ -378,37 +550,3 @@ def test_answer_with_retrieval_returns_rag_response(db_session, test_collection)
     assert len(result.sources) == 1
     assert result.sources[0].chunk_id == str(chunk.id)
     assert result.sources[0].score == 0.95
-
-
-def test_retrieve_end_to_end(db_session, test_collection, monkeypatch):
-    chunk_a = _make_chunk(db_session, test_collection, content="Alpha content")
-    chunk_b = _make_chunk(db_session, test_collection, content="Beta content")
-
-    def mock_vector_search(session, query_vector, *, top_k, filters, collection):
-        return [
-            _scored(chunk_a, 0.9),
-            _scored(chunk_b, 0.7),
-        ][:top_k]
-
-    monkeypatch.setattr("app.rag.retrieval.vector_search", mock_vector_search)
-
-    client = fake_completion_client(
-        rerank_ids=[str(chunk_b.id), str(chunk_a.id)],
-        answer="Beta is the answer",
-    )
-
-    result = retrieve(
-        query="Which chunk?",
-        top_k=1,
-        filters=None,
-        rerank=True,
-        collection=str(test_collection.id),
-        session=db_session,
-        embed_fn=fake_embed_fn,
-        completion_client=client,
-        completion_model="test-model",
-    )
-
-    assert result.answer == "Beta is the answer"
-    assert len(result.sources) == 1
-    assert result.sources[0].chunk_id == str(chunk_b.id)

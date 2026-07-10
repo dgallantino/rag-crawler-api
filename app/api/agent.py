@@ -19,7 +19,7 @@ from app.exceptions import ForbiddenError, RateLimitError
 from app.models import SystemUser
 from app.schemas.query import AgentRetrievalResult, AgentSearchRequest, RetrievalResult
 from app.services.collections import CollectionNotFoundError, get_collection_by_slug
-from app.services.rag import retrieve
+from app.services.rag import rag
 from app.services.rate_limit import check_rate_limit
 from app.services.tenant_cache import get_redis_client
 
@@ -78,12 +78,12 @@ def agent_search(
             )
 
     # Call retrieve with server-side defaults — never trust agent-supplied identity fields
-    result: RetrievalResult = retrieve(
+    result: RetrievalResult = rag(
         user_id=str(tenant.id),
         query=body.query,
         top_k=_AGENT_DEFAULT_TOP_K,
         filters=None,
-        rerank=_AGENT_DEFAULT_RERANK,
+        with_rerank=_AGENT_DEFAULT_RERANK,
         collection=body.collection,
     )
 

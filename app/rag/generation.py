@@ -6,10 +6,13 @@ final RagResponse returned up through app.rag.retrieval.retrieve().
 """
 
 from __future__ import annotations
+from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from app.rag.retrieval import ScoredChunk
+from app.models import DocumentChunk
+from app.rag.rerank import RerankedChunk
+from app.rag.retrieval import RetrievedChunk
 
 _SYSTEM_PROMPT = (
     "You are a helpful assistant. Answer the question using only the provided context. "
@@ -20,7 +23,7 @@ _SYSTEM_PROMPT = (
 class Source(BaseModel):
     chunk_id: str
     document_id: str
-    chunk_index: int
+    chunk_index: list[int]
     score: float
 
 
@@ -28,6 +31,24 @@ class RagResponse(BaseModel):
     answer: str
     sources: list[Source]
 
+@dataclass
+class ScoredChunk:
+    """A RetrievedChunk or RerankedChunk that has been normalized."""
+    chunk: DocumentChunk
+    score: float
+
+def normalize_chunks(chunks: list[RetrievedChunk] | list[RerankedChunk]) -> list[ScoredChunk]:
+    """Normalize chunks by extracting the chunk and score."""
+    return [
+        ScoredChunk(
+            chunk=chunk.chunk,
+            score=getattr(chunk, "rerank_score", getattr(chunk, "similarity_score", None)),
+        )
+        for chunk in chunks
+        if chunk.chunk is not None
+    ]
+
+# TODO: merge chunks that is adjecent before building the context
 
 def build_context(chunks: list[ScoredChunk], *, max_chars: int | None = None) -> str:
     """Concatenate chunk contents into a single context string.
@@ -86,6 +107,7 @@ def answer_with_retrieval(
     completion_model: str,
 ) -> RagResponse:
     """Build the final response returned by app.rag.retrieval.retrieve()."""
+    # TODO: only return answer do not return chunks
     context = build_context(chunks)
     answer = generate_answer(
         query,
