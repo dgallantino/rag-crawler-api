@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     embedding_model: str = "openai/text-embedding-3-small"
 
+    # RAG query API auth
+    internal_bearer_token: str = ""
+
+    # API key → tenant Redis cache
+    api_key_cache_ttl: int = 300
+
 
 @lru_cache
 def get_settings() -> Settings:
