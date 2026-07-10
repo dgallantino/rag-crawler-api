@@ -25,7 +25,7 @@ from app.services.tenant_cache import get_redis_client
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/agent", tags=["agent"])
+router = APIRouter(prefix="/agent", tags=["agent"])
 
 _AGENT_DEFAULT_TOP_K = 5
 _AGENT_DEFAULT_RERANK = True

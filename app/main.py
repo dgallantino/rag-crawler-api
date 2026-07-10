@@ -21,6 +21,8 @@ from app.schemas.common import MessageResponse
 
 logger = logging.getLogger(__name__)
 
+API_V1_PREFIX = "/v1"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,10 +49,10 @@ app.add_middleware(RequestIDMiddleware)
 register_exception_handlers(app)
 
 app.include_router(health_router)
-app.include_router(collections_router)
-app.include_router(documents_router)
-app.include_router(query_router)
-app.include_router(agent_router)
+app.include_router(collections_router, prefix=API_V1_PREFIX)
+app.include_router(documents_router, prefix=API_V1_PREFIX)
+app.include_router(query_router, prefix=API_V1_PREFIX)
+app.include_router(agent_router, prefix=API_V1_PREFIX)
 
 
 @app.get("/", response_model=MessageResponse)
