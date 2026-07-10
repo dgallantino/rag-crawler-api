@@ -3,7 +3,7 @@
 Responsible for turning a query embedding into a ranked list of
 candidate chunks from Postgres/pgvector. Does not call any LLMs and
 does not know about reranking or answer generation — see rerank.py and
-stitch.py for those.
+generation.py for those.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.models import DocumentChunk
 
 if TYPE_CHECKING:
-    from app.rag.stitch import RagResponse  # avoids circular import at module load time
+    from app.rag.generation import RagResponse  # avoids circular import at module load time
 
 
 EmbedFn = Callable[[str], list[float]]
@@ -29,7 +29,7 @@ EmbedFn = Callable[[str], list[float]]
 class ScoredChunk:
     """A DocumentChunk plus its retrieval-stage similarity score.
 
-    Shared across retrieval -> rerank -> stitch so those modules never
+    Shared across retrieval -> rerank -> generation so those modules never
     need to touch the ORM model directly for scoring.
     """
 
@@ -130,14 +130,14 @@ def retrieve(
 ) -> RagResponse:
     """Entry point matching the service-layer stub, minus `user_id`.
 
-    Orchestrates retrieval -> optional rerank -> stitch. This is the
+    Orchestrates retrieval -> optional rerank -> generation. This is the
     only function `app.rag` should expose to the service layer.
 
     When rerank=True, fetches top_k * 4 candidates from vector search
     before reranking down to top_k.
     """
     from app.rag.rerank import rerank as rerank_chunks  # local import avoids cycle
-    from app.rag.stitch import stitch
+    from app.rag.generation import answer_with_retrieval
 
     query_vector = embed_query(query, embed_fn)
     fetch_k = top_k * 4 if rerank else top_k
@@ -161,7 +161,7 @@ def retrieve(
     else:
         candidates = candidates[:top_k]
 
-    return stitch(
+    return answer_with_retrieval(
         query,
         candidates,
         completion_client,

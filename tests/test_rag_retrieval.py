@@ -1,4 +1,4 @@
-"""Tests for RAG retrieval, rerank, and stitch modules.
+"""Tests for RAG retrieval, rerank, and generation modules.
 
 All tests use mocked embed_fn and completion_client — no live API calls.
 """
@@ -26,7 +26,11 @@ from app.rag.retrieval import (
     _distance_to_score,
     retrieve,
 )
-from app.rag.stitch import build_context, generate_answer, stitch
+from app.rag.generation import (
+    answer_with_retrieval,
+    build_context,
+    generate_answer,
+)
 
 
 def fake_embed_fn(_query: str) -> list[float]:
@@ -294,7 +298,7 @@ def test_rerank_fallback_on_client_error(db_session, test_collection):
     assert result[0].score == 0.9
 
 
-# --- stitch.py ---
+# --- generation.py ---
 
 
 def test_build_context_orders_by_score_and_tags():
@@ -361,12 +365,14 @@ def test_generate_answer_handles_none_content():
     assert result == ""
 
 
-def test_stitch_returns_rag_response(db_session, test_collection):
+def test_answer_with_retrieval_returns_rag_response(db_session, test_collection):
     chunk = _make_chunk(db_session, test_collection, content="SLA is 99.9%")
     scored = [_scored(chunk, 0.95)]
     client = fake_completion_client(answer="The SLA is 99.9%")
 
-    result = stitch("What is the SLA?", scored, client, completion_model="test-model")
+    result = answer_with_retrieval(
+        "What is the SLA?", scored, client, completion_model="test-model"
+    )
 
     assert result.answer == "The SLA is 99.9%"
     assert len(result.sources) == 1

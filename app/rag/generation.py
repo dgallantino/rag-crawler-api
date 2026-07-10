@@ -1,4 +1,4 @@
-"""Assemble retrieved chunks into a final answer.
+"""Answer generation from retrieved chunks.
 
 Combines chunk contents into a context block, calls the completion
 client to generate an answer grounded in that context, and shapes the
@@ -78,7 +78,7 @@ def generate_answer(
     return response.choices[0].message.content or ""
 
 
-def stitch(
+def answer_with_retrieval(
     query: str,
     chunks: list[ScoredChunk],
     completion_client,
