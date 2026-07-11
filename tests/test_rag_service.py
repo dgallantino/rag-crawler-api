@@ -9,7 +9,12 @@ import pytest
 from app.config import Settings
 from app.rag.generation import RagResponse, ScoredChunk
 from app.rag.retrieval import RetrievedChunk
-from app.services.rag import create_embed_fn, create_openai_client, rag
+from app.services.rag import (
+        create_embed_fn,
+        create_openai_client,
+        create_rerank_fn,
+        rag_service,
+    )
 
 
 def _mock_rag_settings(monkeypatch) -> MagicMock:
@@ -87,6 +92,124 @@ def test_create_embed_fn_embeds_text(monkeypatch) -> None:
     }
 
 
+def _rerank_settings(**overrides) -> Settings:
+    defaults = {
+        "api_key_hash_secret": "test-secret",
+        "openrouter_api_key": "sk-test",
+        "openrouter_base_url": "https://openrouter.ai/api/v1",
+    }
+    defaults.update(overrides)
+    return Settings(**defaults)
+
+
+def test_create_rerank_fn_raises_when_api_key_missing() -> None:
+    settings = Settings(
+        api_key_hash_secret="test-secret",
+        openrouter_api_key="",
+    )
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY is not configured"):
+        create_rerank_fn(settings)
+
+
+def test_create_rerank_fn_remapped_chunks(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "results": [
+                    {
+                        "index": 2,
+                        "relevance_score": 0.99,
+                        "document": {"text": "SLA is 24 hours"},
+                    },
+                    {
+                        "index": 0,
+                        "relevance_score": 0.42,
+                        "document": {"text": "Pricing tiers"},
+                    },
+                ]
+            }
+
+    def fake_post(url, *, headers, json, timeout):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("app.services.rag.httpx.post", fake_post)
+
+    chunk_a = MagicMock()
+    chunk_a.content = "Pricing tiers"
+    chunk_b = MagicMock()
+    chunk_b.content = "Support contacts"
+    chunk_c = MagicMock()
+    chunk_c.content = "SLA is 24 hours"
+
+    chunks = [
+        RetrievedChunk(chunk=chunk_a, similarity_score=0.55),
+        RetrievedChunk(chunk=chunk_b, similarity_score=0.66),
+        RetrievedChunk(chunk=chunk_c, similarity_score=0.77),
+    ]
+
+    rerank = create_rerank_fn(_rerank_settings())
+    result = rerank("What is the SLA?", 2, chunks)
+
+    assert captured == {
+        "url": "https://openrouter.ai/api/v1/rerank",
+        "headers": {
+            "Authorization": "Bearer sk-test",
+            "Content-Type": "application/json",
+        },
+        "json": {
+            "model": "cohere/rerank-v3.5",
+            "query": "What is the SLA?",
+            "documents": [
+                "Pricing tiers",
+                "Support contacts",
+                "SLA is 24 hours",
+            ],
+            "top_n": 2,
+        },
+        "timeout": 30.0,
+    }
+    assert len(result) == 2
+    assert result[0].chunk is chunk_c
+    assert result[0].rerank_score == 0.99
+    assert result[0].similarity_score == 0.77
+    assert result[1].chunk is chunk_a
+    assert result[1].rerank_score == 0.42
+    assert result[1].similarity_score == 0.55
+
+
+def test_create_rerank_fn_raises_on_http_error(monkeypatch) -> None:
+    import httpx
+
+    def fake_post(*args, **kwargs):
+        request = httpx.Request("POST", "https://openrouter.ai/api/v1/rerank")
+        return httpx.Response(502, request=request)
+
+    monkeypatch.setattr("app.services.rag.httpx.post", fake_post)
+
+    chunk = MagicMock()
+    chunk.content = "Some content"
+    chunks = [RetrievedChunk(chunk=chunk, similarity_score=0.9)]
+
+    rerank = create_rerank_fn(_rerank_settings())
+
+    with pytest.raises(httpx.HTTPStatusError):
+        rerank("query", 1, chunks)
+
+
+def test_create_rerank_fn_returns_empty_for_no_chunks() -> None:
+    rerank = create_rerank_fn(_rerank_settings())
+    assert rerank("query", 3, []) == []
+
+
 def test_rag_retrieves_and_generates_answer(db_session, test_collection, monkeypatch):
     _mock_rag_settings(monkeypatch)
     chunk = MagicMock()
@@ -108,11 +231,7 @@ def test_rag_retrieves_and_generates_answer(db_session, test_collection, monkeyp
         )
         return retrieved
 
-    def mock_normalize(chunks):
-        return [ScoredChunk(chunk=chunk, score=0.9)]
-
     monkeypatch.setattr("app.services.rag.retrieve", mock_retrieve)
-    monkeypatch.setattr("app.services.rag.normalize_chunks", mock_normalize)
     monkeypatch.setattr(
         "app.services.rag.create_embed_fn",
         lambda settings: lambda text: [0.0] * 1536,
@@ -126,8 +245,7 @@ def test_rag_retrieves_and_generates_answer(db_session, test_collection, monkeyp
         lambda query, chunks, client, *, completion_model: expected,
     )
 
-    result = rag(
-        user_id="user-1",
+    result = rag_service(
         query="What is the SLA?",
         top_k=3,
         filters={"metadata": {"doc_type": "contract"}},
@@ -173,8 +291,7 @@ def test_rag_does_not_call_rerank(db_session, monkeypatch):
         lambda *a, **k: RagResponse(answer="", sources=[]),
     )
 
-    rag(
-        user_id="user-1",
+    rag_service(
         query="q",
         top_k=1,
         filters=None,

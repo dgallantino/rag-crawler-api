@@ -10,12 +10,16 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from openai import RateLimitError
+from sqlalchemy.orm import Session
 
+from app.crawler.settings import USER_AGENT
+from app.database import get_db
 from app.dependencies.bearer import require_bearer_token
 from app.schemas.query import BackendQueryRequest, RetrievalResult
-from app.services.rag import rag
+from app.services.collections import CollectionNotFoundError, get_collection, get_collection_by_slug
+from app.services.rag import rag_service
 from app.services.rate_limit import check_rate_limit
 from app.services.tenant_cache import get_redis_client
 
@@ -33,7 +37,11 @@ _QUERY_RATE_LIMIT = 512
     summary="Backend-facing retrieval query",
     operation_id="queryBackend",
 )
-def query_backend(body: BackendQueryRequest, request: Request) -> RetrievalResult:
+def query_backend(
+    body: BackendQueryRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+    ) -> RetrievalResult:
     """
     Handle full-parameter retrieval for trusted backend/internal systems.
 
@@ -69,17 +77,21 @@ def query_backend(body: BackendQueryRequest, request: Request) -> RetrievalResul
         )
         raise RateLimitError(retry_after=retry_after)
 
+    try:
+        collection = get_collection_by_slug(db, body.user_id, body.collection)
+    except CollectionNotFoundError:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
     start = time.monotonic()
 
     filters = body.filters.model_dump(exclude_none=True) if body.filters else None
 
-    result = rag(
-        user_id=body.user_id,
+    result = rag_service(
         query=body.query,
         top_k=body.top_k,
         filters=filters,
         with_rerank=body.rerank,
-        collection=body.collection,
+        collection=str(collection.id),
     )
 
     elapsed_ms = int((time.monotonic() - start) * 1000)

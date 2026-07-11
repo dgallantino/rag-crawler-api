@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-from httpx import get
-from pytest import Session
+import httpx
+from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.rag.generation import answer_with_retrieval, normalize_chunks
-from app.rag.rerank import rerank
+from app.rag.rerank import RerankServiceFn, RerankedChunk, rerank
 from app.rag.processor import MarkdownProcessor
-from app.rag.retrieval import EmbedFn, retrieve
+from app.rag.retrieval import EmbedFn, RetrievedChunk, retrieve
 
 from openai import OpenAI
 
 settings = get_settings()
 
-def rag(
-    user_id: str,
+def rag_service(
     query: str,
     top_k: int,
     filters: dict | None,
     collection: str | None,
     *,
+    use_rerank: bool = False,
     session: Session,
 ) -> dict:
     """Retrieve relevant chunks for a query.
@@ -29,11 +29,15 @@ def rag(
     """
     settings = get_settings()
     embed_fn = create_embed_fn(settings)
-    initial_retrieve_k = top_k 
+
+    initial_retrieve_k = top_k if not use_rerank else top_k * 4
     candidates = retrieve(
         query, initial_retrieve_k, filters, collection,
         session=session, embed_fn=embed_fn)
     
+    if use_rerank:
+        candidates = rerank(query, candidates, top_k, rerank_service_fn=create_rerank_fn(settings))
+
     completion_client = create_openai_client(settings)
     answer = answer_with_retrieval(
         query,
@@ -64,6 +68,54 @@ def create_embed_fn(settings: Settings) -> EmbedFn:
         return response.data[0].embedding
 
     return embed
+
+
+_DEFAULT_RERANK_MODEL = "cohere/rerank-v3.5"
+
+
+def create_rerank_fn(settings: Settings) -> RerankServiceFn:
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured")
+
+    rerank_url = f"{settings.openrouter_base_url.rstrip('/')}/rerank"
+    model = getattr(settings, "rerank_model", _DEFAULT_RERANK_MODEL)
+
+    def rerank_fn(
+        query: str, top_k: int, chunks: list[RetrievedChunk]
+    ) -> list[RerankedChunk]:
+        if not chunks:
+            return []
+
+        response = httpx.post(
+            rerank_url,
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "query": query,
+                "documents": [item.chunk.content for item in chunks],
+                "top_n": top_k,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+
+        reranked: list[RerankedChunk] = []
+        for result in response.json()["results"]:
+            # Re-map the index to the original chunk
+            original = chunks[result["index"]]
+            reranked.append(
+                RerankedChunk(
+                    chunk=original.chunk,
+                    rerank_score=result["relevance_score"],
+                    similarity_score=original.similarity_score,
+                )
+            )
+        return reranked
+
+    return rerank_fn
 
 
 def create_markdown_processor(settings: Settings) -> MarkdownProcessor:
