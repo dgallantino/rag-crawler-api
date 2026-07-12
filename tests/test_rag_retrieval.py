@@ -550,7 +550,7 @@ def test_answer_with_retrieval_returns_rag_response():
     chunk = MagicMock()
     chunk.id = uuid4()
     chunk.document_id = uuid4()
-    chunk.chunk_index = [0]
+    chunk.chunk_index = 0
     chunk.content = "SLA is 99.9%"
     scored = [_scored(chunk, 0.95)]
     client = fake_completion_client(answer="The SLA is 99.9%")

@@ -4,7 +4,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
-from app.rag.generation import answer_with_retrieval, normalize_chunks
+from app.rag.generation import RagResponse, answer_with_retrieval, normalize_chunks
 from app.rag.rerank import RerankServiceFn, RerankedChunk, rerank
 from app.rag.processor import MarkdownProcessor
 from app.rag.retrieval import EmbedFn, RetrievedChunk, retrieve
@@ -22,7 +22,7 @@ def rag_service(
     *,
     use_rerank: bool = False,
     session: Session,
-) -> dict:
+) -> RagResponse:
     """Retrieve relevant chunks for a query.
 
     This is a black-box stub. The real implementation (embedding, vector
@@ -38,6 +38,8 @@ def rag_service(
     
     if use_rerank:
         candidates = rerank(query, candidates, top_k, rerank_service_fn=create_rerank_fn(settings))
+    else:
+        candidates = candidates[:top_k]
 
     completion_client = create_openai_client(settings)
     answer = answer_with_retrieval(

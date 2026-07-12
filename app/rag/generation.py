@@ -23,7 +23,7 @@ _SYSTEM_PROMPT = (
 class Source(BaseModel):
     chunk_id: str
     document_id: str
-    chunk_index: list[int]
+    chunk_index: int
     score: float
 
 

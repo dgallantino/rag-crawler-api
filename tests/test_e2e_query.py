@@ -83,8 +83,8 @@ def test_query_backend_live_openrouter(
         "database": {},
         "assertions": [
             "status_code == 200",
-            "len(results) > 0",
-            "top result mentions 99.9%",
+            "answer mentions 99.9%",
+            "len(sources) > 0",
         ],
     }
 
@@ -106,8 +106,8 @@ def test_query_backend_live_openrouter(
 
         assert response.status_code == 200
         payload = response.json()
-        assert len(payload["results"]) > 0
-        assert "99.9%" in payload["results"][0]["text"]
+        assert "99.9%" in payload["answer"]
+        assert len(payload["sources"]) > 0
         report["status"] = "passed"
     except Exception as exc:
         report["error"] = str(exc)

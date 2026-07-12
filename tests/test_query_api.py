@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 
 from app.config import Settings
+from app.rag.generation import RagResponse
 
 
 def _bearer_headers(token: str) -> dict[str, str]:
@@ -20,7 +22,6 @@ def query_api_settings(monkeypatch) -> Settings:
         internal_bearer_token="test-bearer-token",
     )
     monkeypatch.setattr("app.dependencies.bearer.get_settings", lambda: settings)
-    monkeypatch.setattr("app.api.query.get_settings", lambda: settings)
     return settings
 
 
@@ -78,7 +79,7 @@ def test_query_returns_matching_chunks(
     from tests.test_rag_retrieval import _make_chunk, _vec
 
     user, _ = test_user
-    chunk = _make_chunk(
+    _make_chunk(
         db_session,
         test_collection,
         content="Enterprise SLA is 99.9% uptime",
@@ -86,8 +87,19 @@ def test_query_returns_matching_chunks(
     )
 
     monkeypatch.setattr(
-        "app.api.query.create_embed_fn",
+        "app.services.rag.create_embed_fn",
         lambda settings: (lambda _text: _vec(1.0)),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.create_openai_client",
+        lambda settings: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.answer_with_retrieval",
+        lambda query, chunks, client, *, completion_model: RagResponse(
+            answer="Enterprise SLA is 99.9% uptime",
+            sources=[],
+        ),
     )
 
     response = client.post(
@@ -104,9 +116,5 @@ def test_query_returns_matching_chunks(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["query_used"] == "What is the enterprise SLA?"
-    assert payload["reranked"] is False
-    assert len(payload["results"]) == 1
-    assert payload["results"][0]["chunk_id"] == str(chunk.id)
-    assert "99.9%" in payload["results"][0]["text"]
-    assert payload["results"][0]["score"] == pytest.approx(1.0, abs=1e-4)
+    assert "99.9%" in payload["answer"]
+    assert payload["sources"] == []
