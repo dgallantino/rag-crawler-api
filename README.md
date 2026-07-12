@@ -65,16 +65,13 @@ pip install -r requirements-test.txt
 pytest
 ```
 
-By default, live e2e tests (real OpenRouter calls) are **excluded**. To run them:
+By default, live e2e tests (real OpenRouter calls) are **excluded**. To run them, ensure `OPENROUTER_API_KEY` is set in `.env`, then:
 
 ```bash
-cp .env.test.example .env.test
-# Set OPENROUTER_API_KEY in .env.test
-
 RUN_E2E=1 pytest -m e2e
 ```
 
-E2e tests write a YAML test report (request, response, database dumps) to `E2E_REPORT_DIR` from `.env.test`, or `/tmp` if unset. Example: `/tmp/e2e_query_20260712T135600Z_test_query_backend_live_openrouter.yaml`.
+E2e tests write a YAML test report (request, response, database dumps) to `E2E_REPORT_DIR` from `.env`, or `/tmp` if unset. Example: `/tmp/e2e_query_20260712T135600Z_test_query_backend_live_openrouter.yaml`.
 
 ## What's Implemented vs Stubbed
 

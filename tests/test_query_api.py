@@ -6,9 +6,22 @@ from uuid import uuid4
 
 import pytest
 
+from app.config import Settings
+
 
 def _bearer_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def query_api_settings(monkeypatch) -> Settings:
+    settings = Settings(
+        api_key_hash_secret="test-secret",
+        internal_bearer_token="test-bearer-token",
+    )
+    monkeypatch.setattr("app.dependencies.bearer.get_settings", lambda: settings)
+    monkeypatch.setattr("app.api.query.get_settings", lambda: settings)
+    return settings
 
 
 def test_query_requires_bearer_token(client, test_user, test_collection) -> None:
@@ -24,21 +37,21 @@ def test_query_requires_bearer_token(client, test_user, test_collection) -> None
     assert response.status_code == 401
 
 
-def test_query_unknown_user_returns_404(client, test_settings) -> None:
+def test_query_unknown_user_returns_404(client, query_api_settings) -> None:
     response = client.post(
         "/v1/query",
         json={
             "user_id": str(uuid4()),
             "query": "What is the SLA?",
         },
-        headers=_bearer_headers(test_settings.internal_bearer_token),
+        headers=_bearer_headers(query_api_settings.internal_bearer_token),
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "User not found"
 
 
 def test_query_unknown_collection_returns_404(
-    client, test_user, test_settings
+    client, test_user, query_api_settings
 ) -> None:
     user, _ = test_user
     response = client.post(
@@ -48,7 +61,7 @@ def test_query_unknown_collection_returns_404(
             "query": "What is the SLA?",
             "collection": "missing-collection",
         },
-        headers=_bearer_headers(test_settings.internal_bearer_token),
+        headers=_bearer_headers(query_api_settings.internal_bearer_token),
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "Collection not found"
@@ -59,7 +72,7 @@ def test_query_returns_matching_chunks(
     db_session,
     test_user,
     test_collection,
-    test_settings,
+    query_api_settings,
     monkeypatch,
 ) -> None:
     from tests.test_rag_retrieval import _make_chunk, _vec
@@ -86,7 +99,7 @@ def test_query_returns_matching_chunks(
             "rerank": False,
             "collection": test_collection.slug,
         },
-        headers=_bearer_headers(test_settings.internal_bearer_token),
+        headers=_bearer_headers(query_api_settings.internal_bearer_token),
     )
 
     assert response.status_code == 200

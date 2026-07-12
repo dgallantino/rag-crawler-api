@@ -27,7 +27,6 @@ wheels/
 .env
 .env.*
 !.env.example
-!.env.test.example
 *.pem
 *.key
 credentials.json

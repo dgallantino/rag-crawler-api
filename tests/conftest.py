@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from collections.abc import Generator
-from functools import lru_cache
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 from testcontainers.postgres import PostgresContainer
 
 from app.config import get_settings
@@ -18,10 +15,6 @@ from app.database import Base, get_db
 from app.main import app
 from app.services.collections import create_collection
 from app.services.system_user import create_system_user
-from tests.settings import TestSettings
-
-os.environ.setdefault("API_KEY_HASH_SECRET", "test-secret")
-os.environ.setdefault("OPENROUTER_API_KEY", "test-openrouter-key")
 
 
 @pytest.fixture(scope="session")
@@ -33,40 +26,6 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
 @pytest.fixture(scope="session")
 def postgres_url(postgres_container: PostgresContainer) -> str:
     return postgres_container.get_connection_url()
-
-
-@pytest.fixture(scope="session")
-def test_settings(postgres_url: str) -> TestSettings:
-    return TestSettings(database_url=postgres_url)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def configure_test_settings(test_settings: TestSettings) -> Generator[TestSettings, None, None]:
-    """Patch get_settings for the entire test session."""
-    import app.config
-
-    get_settings.cache_clear()
-    original_get_settings = app.config.get_settings
-
-    @lru_cache
-    def _get_test_settings() -> TestSettings:
-        return test_settings
-
-    app.config.get_settings = _get_test_settings  # type: ignore[assignment]
-
-    patched_modules = []
-    for module in sys.modules.values():
-        if module is not None and getattr(module, "get_settings", None) is original_get_settings:
-            setattr(module, "get_settings", _get_test_settings)
-            patched_modules.append(module)
-
-    yield test_settings
-
-    app.config.get_settings = original_get_settings
-    for module in patched_modules:
-        setattr(module, "get_settings", original_get_settings)
-    _get_test_settings.cache_clear()
-    get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session")
@@ -94,12 +53,14 @@ def db_session(db_engine) -> Generator[Session, None, None]:
 
 
 @pytest.fixture
-def api_key_secret(test_settings: TestSettings) -> str:
-    return test_settings.api_key_hash_secret
+def api_key_secret() -> str:
+    return "test-secret"
 
 
 @pytest.fixture
-def test_user(db_session, api_key_secret: str):
+def test_user(db_session, api_key_secret: str, monkeypatch):
+    monkeypatch.setenv("API_KEY_HASH_SECRET", api_key_secret)
+    get_settings.cache_clear()
     user, api_key = create_system_user(db_session, name="Test Tenant")
     return user, api_key
 

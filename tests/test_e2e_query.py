@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from app.config import get_settings
 from app.services.rag import create_embed_fn
 from tests.e2e_report import (
     build_report_path,
@@ -19,28 +20,35 @@ from tests.e2e_report import (
 from tests.test_rag_retrieval import _make_chunk
 
 
+def e2e_is_configured() -> bool:
+    if os.getenv("RUN_E2E") != "1":
+        return False
+    get_settings.cache_clear()
+    return bool(get_settings().openrouter_api_key.strip())
+
+
 def _bearer_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.mark.e2e
 @pytest.mark.skipif(
-    os.getenv("RUN_E2E") != "1" or not os.getenv("OPENROUTER_API_KEY"),
-    reason="Live e2e disabled. Set RUN_E2E=1 and OPENROUTER_API_KEY to run.",
+    not e2e_is_configured(),
+    reason="Live e2e disabled. Set RUN_E2E=1 and OPENROUTER_API_KEY in .env.",
 )
 def test_query_backend_live_openrouter(
     client,
     db_session,
     test_user,
     test_collection,
-    test_settings,
 ) -> None:
+    settings = get_settings()
     user, _ = test_user
     seed_content = (
         "Enterprise customers receive a 99.9% uptime SLA with 24/7 support."
     )
 
-    embed_fn = create_embed_fn(test_settings)
+    embed_fn = create_embed_fn(settings)
     chunk_vector = embed_fn(seed_content)
     _make_chunk(
         db_session,
@@ -57,7 +65,7 @@ def test_query_backend_live_openrouter(
         "rerank": False,
         "collection": test_collection.slug,
     }
-    auth_headers = _bearer_headers(test_settings.internal_bearer_token)
+    auth_headers = _bearer_headers(settings.internal_bearer_token)
 
     report: dict[str, Any] = {
         "report_type": "e2e_test",
@@ -81,7 +89,7 @@ def test_query_backend_live_openrouter(
     }
 
     report_path = build_report_path(
-        test_settings.e2e_report_dir,
+        settings.e2e_report_dir,
         "test_query_backend_live_openrouter",
     )
     started = time.monotonic()
