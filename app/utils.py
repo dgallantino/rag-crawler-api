@@ -1,10 +1,10 @@
 """Planned: Shared utility helpers used across the application."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 
 def utc_now() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def normalize_url(url: str) -> str:

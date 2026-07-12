@@ -1,15 +1,14 @@
 """Tests for RAG retrieval and generation modules.
 
-Uses mocked embed/completion clients — no live API calls.
-vector_search uses mocked session.execute because pgvector operators
-require Postgres; _apply_filters runs against the real sqlite test DB.
+Retrieval and filter tests run against Postgres/pgvector via testcontainers.
+Generation unit tests use mocked completion clients — no live API calls.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
 from unittest.mock import MagicMock
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
@@ -46,6 +45,13 @@ def fake_completion_client(answer: str = "Mock answer") -> MagicMock:
     return mock
 
 
+def _vec(*values: float) -> list[float]:
+    vector = [0.0] * 1536
+    for index, value in enumerate(values):
+        vector[index] = value
+    return vector
+
+
 def _make_chunk(
     db_session,
     collection,
@@ -54,6 +60,7 @@ def _make_chunk(
     metadata: dict | None = None,
     created_at: datetime | None = None,
     chunk_vector: list[float] | None = None,
+    chunk_index: int = 0,
 ) -> DocumentChunk:
     document = Document(
         collection_id=collection.id,
@@ -67,7 +74,7 @@ def _make_chunk(
     chunk = DocumentChunk(
         document_id=document.id,
         collection_id=collection.id,
-        chunk_index=0,
+        chunk_index=chunk_index,
         content=content,
         chunk_metadata=metadata,
         created_at=created_at or datetime(2024, 6, 15, 12, 0, 0),
@@ -84,17 +91,6 @@ def _retrieved(chunk: DocumentChunk, similarity_score: float = 0.9) -> Retrieved
 
 def _scored(chunk: DocumentChunk, score: float = 0.9) -> ScoredChunk:
     return ScoredChunk(chunk=chunk, score=score)
-
-
-def _mock_execute(session, rows: list[tuple[object, float]]) -> None:
-    session.execute = MagicMock(return_value=MagicMock(all=lambda: rows))
-
-
-def _mock_chunk(content: str = "chunk content") -> MagicMock:
-    chunk = MagicMock()
-    chunk.id = uuid4()
-    chunk.content = content
-    return chunk
 
 
 # --- retrieval.py: _distance_to_score ---
@@ -294,60 +290,87 @@ def test_apply_filters_empty_dict_is_noop(db_session, test_collection):
 # --- retrieval.py: vector_search ---
 
 
-def test_vector_search_maps_distance_to_similarity_score(db_session):
-    chunk_a = _mock_chunk("Alpha")
-    chunk_b = _mock_chunk("Beta")
-    _mock_execute(db_session, [(chunk_a, 0.1), (chunk_b, 0.4)])
+def test_vector_search_maps_distance_to_similarity_score(db_session, test_collection):
+    closer = _make_chunk(
+        db_session,
+        test_collection,
+        content="Alpha",
+        chunk_vector=_vec(1.0),
+    )
+    _make_chunk(
+        db_session,
+        test_collection,
+        content="Beta",
+        chunk_vector=_vec(0.0, 1.0),
+    )
 
     results = vector_search(
         db_session,
-        [0.0] * 1536,
+        _vec(1.0),
         top_k=2,
         filters=None,
         collection=None,
     )
 
     assert len(results) == 2
-    assert results[0].chunk is chunk_a
-    assert results[0].similarity_score == pytest.approx(0.9)
-    assert results[1].chunk is chunk_b
-    assert results[1].similarity_score == pytest.approx(0.6)
+    assert results[0].chunk.id == closer.id
+    assert results[0].similarity_score == pytest.approx(1.0, abs=1e-5)
+    assert results[1].similarity_score < results[0].similarity_score
 
 
-def test_vector_search_respects_top_k(db_session):
-    chunks = [_mock_chunk(f"chunk-{i}") for i in range(3)]
-    _mock_execute(db_session, [(chunk, float(i) * 0.1) for i, chunk in enumerate(chunks)])
+def test_vector_search_respects_top_k(db_session, test_collection):
+    for index in range(3):
+        _make_chunk(
+            db_session,
+            test_collection,
+            content=f"chunk-{index}",
+            chunk_index=index,
+            chunk_vector=_vec(1.0 - index * 0.1),
+        )
 
-    vector_search(
+    results = vector_search(
         db_session,
-        [0.0] * 1536,
+        _vec(1.0),
         top_k=2,
         filters=None,
         collection=None,
     )
 
-    db_session.execute.assert_called_once()
-    compiled = db_session.execute.call_args[0][0]
-    assert compiled._limit_clause.value == 2  # type: ignore[attr-defined]
+    assert len(results) == 2
 
 
-def test_vector_search_scopes_by_collection(db_session, test_collection):
-    in_collection_id = str(test_collection.id)
-    _mock_execute(db_session, [])
+def test_vector_search_scopes_by_collection(
+    db_session, test_user, test_collection
+):
+    user, _ = test_user
+    from app.services.collections import create_collection
 
-    vector_search(
+    other_collection = create_collection(
+        db_session, user, name="Other Collection", slug="other-collection"
+    )
+    in_scope = _make_chunk(
         db_session,
-        [0.0] * 1536,
-        top_k=5,
-        filters=None,
-        collection=in_collection_id,
+        test_collection,
+        content="in scope",
+        chunk_vector=_vec(1.0),
+    )
+    _make_chunk(
+        db_session,
+        other_collection,
+        content="out of scope",
+        chunk_vector=_vec(1.0),
     )
 
-    stmt = db_session.execute.call_args[0][0]
-    where_clauses = list(stmt._where_criteria)
-    assert len(where_clauses) == 1
-    assert "collection_id" in str(where_clauses[0])
-    assert where_clauses[0].right.value == UUID(in_collection_id)
+    results = vector_search(
+        db_session,
+        _vec(1.0),
+        top_k=5,
+        filters=None,
+        collection=str(test_collection.id),
+    )
+
+    assert len(results) == 1
+    assert results[0].chunk.id == in_scope.id
 
 
 def test_vector_search_applies_filters(db_session, test_collection, monkeypatch):
@@ -359,12 +382,11 @@ def test_vector_search_applies_filters(db_session, test_collection, monkeypatch)
         return original_apply(stmt, filters)
 
     monkeypatch.setattr("app.rag.retrieval._apply_filters", spy)
-    _mock_execute(db_session, [])
 
     filters = {"metadata": {"doc_type": "contract"}}
     vector_search(
         db_session,
-        [0.0] * 1536,
+        _vec(1.0),
         top_k=5,
         filters=filters,
         collection=None,
@@ -373,35 +395,35 @@ def test_vector_search_applies_filters(db_session, test_collection, monkeypatch)
     assert apply_calls == [filters]
 
 
-def test_vector_search_with_metadata_filter(db_session, test_collection, monkeypatch):
-    match = _mock_chunk("contract")
-    other = _mock_chunk("memo")
-    _mock_execute(db_session, [(match, 0.2), (other, 0.1)])
-
-    apply_calls: list[dict] = []
-    original_apply = _apply_filters
-
-    def spy(stmt, filters):
-        apply_calls.append(filters)
-        return original_apply(stmt, filters)
-
-    monkeypatch.setattr("app.rag.retrieval._apply_filters", spy)
-
-    vector_search(
+def test_vector_search_with_metadata_filter(db_session, test_collection):
+    match = _make_chunk(
         db_session,
-        [0.0] * 1536,
+        test_collection,
+        content="contract",
+        metadata={"doc_type": "contract"},
+        chunk_vector=_vec(1.0),
+    )
+    _make_chunk(
+        db_session,
+        test_collection,
+        content="memo",
+        metadata={"doc_type": "memo"},
+        chunk_vector=_vec(1.0),
+    )
+
+    results = vector_search(
+        db_session,
+        _vec(1.0),
         top_k=5,
         filters={"metadata": {"doc_type": "contract"}},
         collection=str(test_collection.id),
     )
 
-    assert apply_calls == [{"metadata": {"doc_type": "contract"}}]
-    assert len(db_session.execute.return_value.all()) == 2
+    assert len(results) == 1
+    assert results[0].chunk.id == match.id
 
 
 def test_vector_search_returns_empty_when_no_rows(db_session):
-    _mock_execute(db_session, [])
-
     results = vector_search(
         db_session,
         [0.0] * 1536,
@@ -427,35 +449,26 @@ def test_embed_query_delegates_to_embed_fn():
     assert called_with == ["hello"]
 
 
-def test_retrieve_embeds_and_searches(db_session, test_collection, monkeypatch):
-    chunk = _make_chunk(db_session, test_collection, content="Alpha content")
-    captured: dict = {}
-
-    def mock_vector_search(session, query_vector, *, top_k, filters, collection):
-        captured["query_vector"] = query_vector
-        captured["top_k"] = top_k
-        captured["filters"] = filters
-        captured["collection"] = collection
-        return [_retrieved(chunk, 0.85)]
-
-    monkeypatch.setattr("app.rag.retrieval.vector_search", mock_vector_search)
+def test_retrieve_embeds_and_searches(db_session, test_collection):
+    chunk = _make_chunk(
+        db_session,
+        test_collection,
+        content="Alpha content",
+        chunk_vector=_vec(1.0),
+    )
 
     results = retrieve(
         query="Which chunk?",
         top_k=2,
-        filters={"metadata": {"doc_type": "contract"}},
+        filters=None,
         collection=str(test_collection.id),
         session=db_session,
-        embed_fn=fake_embed_fn,
+        embed_fn=lambda _query: _vec(1.0),
     )
 
     assert len(results) == 1
     assert results[0].chunk.id == chunk.id
-    assert results[0].similarity_score == 0.85
-    assert captured["query_vector"] == [0.0] * 1536
-    assert captured["top_k"] == 2
-    assert captured["filters"] == {"metadata": {"doc_type": "contract"}}
-    assert captured["collection"] == str(test_collection.id)
+    assert results[0].similarity_score == pytest.approx(1.0, abs=1e-4)
 
 
 # --- generation.py ---

@@ -1,60 +1,101 @@
 """Shared pytest fixtures."""
 
-import os
+from __future__ import annotations
 
-os.environ.setdefault("API_KEY_HASH_SECRET", "test-secret")
-os.environ.setdefault("OPENROUTER_API_KEY", "test-openrouter-key")
+import os
+import sys
+from collections.abc import Generator
+from functools import lru_cache
 
 import pytest
 from fastapi.testclient import TestClient
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import create_engine, event
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
+from testcontainers.postgres import PostgresContainer
 
+from app.config import get_settings
 from app.database import Base, get_db
 from app.main import app
 from app.services.collections import create_collection
 from app.services.system_user import create_system_user
+from tests.settings import TestSettings
+
+os.environ.setdefault("API_KEY_HASH_SECRET", "test-secret")
+os.environ.setdefault("OPENROUTER_API_KEY", "test-openrouter-key")
 
 
-@compiles(Vector, "sqlite")
-def _compile_vector_sqlite(type_, compiler, **kw):
-    return "BLOB"
+@pytest.fixture(scope="session")
+def postgres_container() -> Generator[PostgresContainer, None, None]:
+    with PostgresContainer("pgvector/pgvector:pg16") as postgres:
+        yield postgres
 
 
-@pytest.fixture
-def api_key_secret() -> str:
-    return "test-secret"
+@pytest.fixture(scope="session")
+def postgres_url(postgres_container: PostgresContainer) -> str:
+    return postgres_container.get_connection_url()
 
 
-@pytest.fixture
-def db_engine():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+@pytest.fixture(scope="session")
+def test_settings(postgres_url: str) -> TestSettings:
+    return TestSettings(database_url=postgres_url)
 
-    @event.listens_for(engine, "connect")
-    def _set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
 
+@pytest.fixture(scope="session", autouse=True)
+def configure_test_settings(test_settings: TestSettings) -> Generator[TestSettings, None, None]:
+    """Patch get_settings for the entire test session."""
+    import app.config
+
+    get_settings.cache_clear()
+    original_get_settings = app.config.get_settings
+
+    @lru_cache
+    def _get_test_settings() -> TestSettings:
+        return test_settings
+
+    app.config.get_settings = _get_test_settings  # type: ignore[assignment]
+
+    patched_modules = []
+    for module in sys.modules.values():
+        if module is not None and getattr(module, "get_settings", None) is original_get_settings:
+            setattr(module, "get_settings", _get_test_settings)
+            patched_modules.append(module)
+
+    yield test_settings
+
+    app.config.get_settings = original_get_settings
+    for module in patched_modules:
+        setattr(module, "get_settings", original_get_settings)
+    _get_test_settings.cache_clear()
+    get_settings.cache_clear()
+
+
+@pytest.fixture(scope="session")
+def db_engine(postgres_url: str):
+    engine = create_engine(postgres_url, pool_pre_ping=True)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)
+    engine.dispose()
 
 
 @pytest.fixture
-def db_session(db_engine):
-    session = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)()
+def db_session(db_engine) -> Generator[Session, None, None]:
+    connection = db_engine.connect()
+    transaction = connection.begin()
+    session = Session(bind=connection, join_transaction_mode="create_savepoint")
     try:
         yield session
     finally:
         session.close()
+        transaction.rollback()
+        connection.close()
+
+
+@pytest.fixture
+def api_key_secret(test_settings: TestSettings) -> str:
+    return test_settings.api_key_hash_secret
 
 
 @pytest.fixture
@@ -70,7 +111,7 @@ def test_collection(db_session, test_user):
 
 
 @pytest.fixture
-def client(db_session, test_user):
+def client(db_session):
     def override_get_db():
         try:
             yield db_session

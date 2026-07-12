@@ -4,35 +4,10 @@ import argparse
 import json
 from unittest.mock import MagicMock
 
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from app.auth import generate_api_key, hash_api_key, verify_api_key
 from app.cli import cmd_create_system_user, main
-from app.config import get_settings
 from app.models import SystemUser
 from app.services.system_user import create_system_user
-
-
-@pytest.fixture
-def api_key_secret(monkeypatch: pytest.MonkeyPatch) -> str:
-    secret = "test-api-key-hash-secret"
-    monkeypatch.setenv("API_KEY_HASH_SECRET", secret)
-    get_settings.cache_clear()
-    yield secret
-    get_settings.cache_clear()
-
-
-@pytest.fixture
-def db_session(api_key_secret: str):
-    engine = create_engine("sqlite:///:memory:")
-    SystemUser.__table__.create(engine)
-    session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 def test_hash_api_key_is_deterministic(api_key_secret: str) -> None:

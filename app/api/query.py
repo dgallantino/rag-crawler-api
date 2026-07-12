@@ -9,17 +9,21 @@ from __future__ import annotations
 
 import logging
 import time
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from openai import RateLimitError
 from sqlalchemy.orm import Session
 
-from app.crawler.settings import USER_AGENT
+from app.config import get_settings
 from app.database import get_db
 from app.dependencies.bearer import require_bearer_token
+from app.models import SystemUser
+from app.rag.rerank import rerank
+from app.rag.retrieval import retrieve
 from app.schemas.query import BackendQueryRequest, RetrievalResult
-from app.services.collections import CollectionNotFoundError, get_collection, get_collection_by_slug
-from app.services.rag import rag_service
+from app.services.collections import CollectionNotFoundError, get_collection_by_slug
+from app.services.rag import create_embed_fn, create_rerank_fn, to_retrieval_result
 from app.services.rate_limit import check_rate_limit
 from app.services.tenant_cache import get_redis_client
 
@@ -29,6 +33,7 @@ router = APIRouter(tags=["query"])
 
 
 _QUERY_RATE_LIMIT = 512
+
 
 @router.post(
     "/query",
@@ -40,29 +45,12 @@ _QUERY_RATE_LIMIT = 512
 def query_backend(
     body: BackendQueryRequest,
     request: Request,
-    db: Session = Depends(get_db)
-    ) -> RetrievalResult:
-    """
-    Handle full-parameter retrieval for trusted backend/internal systems.
-
-    This endpoint is intended to be called by other backend services or systems that are protected by
-    a more advanced authentication layer—such as internal API gateways or service meshes—that
-    implement stronger authorization, user validation, or per-tenant rate limiting. Unlike end-user
-    endpoints, all retrieval parameters including user_id and filtering are provided directly by the caller,
-    with the assumption that the caller operates in a secured network boundary and enforces its own
-    authentication and authorization logic upstream.
-
-    Common scenarios:
-      - Invoked by internal applications behind a secure gateway.
-      - Used in service-to-service communication within a trusted environment.
-      - Fronted by systems that integrate with centralized authentication or SSO providers.
-
-    Note: This endpoint does not do further tenant-level checks or rate limiting.
-    """
+    db: Session = Depends(get_db),
+) -> RetrievalResult:
+    """Handle full-parameter retrieval for trusted backend/internal systems."""
     request_id = getattr(request.state, "request_id", None)
     rate_limit_key = f"query:{body.user_id}"
 
-    # Rate limit check
     try:
         redis = get_redis_client()
         allowed, retry_after = check_rate_limit(redis, rate_limit_key, _QUERY_RATE_LIMIT)
@@ -78,21 +66,46 @@ def query_backend(
         raise RateLimitError(retry_after=retry_after)
 
     try:
-        collection = get_collection_by_slug(db, body.user_id, body.collection)
-    except CollectionNotFoundError:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        user_id = UUID(body.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid user_id") from exc
+
+    user = db.get(SystemUser, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    collection_id: str | None = None
+    if body.collection is not None:
+        try:
+            collection = get_collection_by_slug(db, user, body.collection)
+        except CollectionNotFoundError:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        collection_id = str(collection.id)
 
     start = time.monotonic()
-
+    settings = get_settings()
+    embed_fn = create_embed_fn(settings)
     filters = body.filters.model_dump(exclude_none=True) if body.filters else None
+    initial_k = body.top_k if not body.rerank else body.top_k * 4
 
-    result = rag_service(
-        query=body.query,
-        top_k=body.top_k,
-        filters=filters,
-        with_rerank=body.rerank,
-        collection=str(collection.id),
+    candidates = retrieve(
+        body.query,
+        initial_k,
+        filters,
+        collection_id,
+        session=db,
+        embed_fn=embed_fn,
     )
+
+    if body.rerank:
+        candidates = rerank(
+            body.query,
+            candidates,
+            body.top_k,
+            rerank_service_fn=create_rerank_fn(settings),
+        )
+    else:
+        candidates = candidates[: body.top_k]
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
     logger.info(
@@ -106,4 +119,10 @@ def query_backend(
         },
     )
 
-    return result
+    return to_retrieval_result(
+        candidates,
+        query_used=body.query,
+        top_k=body.top_k,
+        reranked=body.rerank,
+        latency_ms=elapsed_ms,
+    )

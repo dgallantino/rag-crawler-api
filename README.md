@@ -57,10 +57,24 @@ Services: `api` (port 8000), `postgres` (5432), `redis` (6379), `celery-worker`.
 
 ## Running Tests
 
+Tests use an ephemeral PostgreSQL instance (pgvector) via [testcontainers-python](https://testcontainers-python.readthedocs.io/). **Docker must be running.**
+
 ```bash
 source venv/bin/activate
+pip install -r requirements-test.txt
 pytest
 ```
+
+By default, live e2e tests (real OpenRouter calls) are **excluded**. To run them:
+
+```bash
+cp .env.test.example .env.test
+# Set OPENROUTER_API_KEY in .env.test
+
+RUN_E2E=1 pytest -m e2e
+```
+
+E2e tests write a YAML test report (request, response, database dumps) to `E2E_REPORT_DIR` from `.env.test`, or `/tmp` if unset. Example: `/tmp/e2e_query_20260712T135600Z_test_query_backend_live_openrouter.yaml`.
 
 ## What's Implemented vs Stubbed
 
