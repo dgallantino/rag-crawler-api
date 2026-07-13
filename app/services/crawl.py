@@ -22,7 +22,7 @@ from app.crawler.storage import DBStorage
 def run_crawl_for_url(
     db: Session,
     url: str,
-    system_user_id: UUID,
+    collection_id: UUID,
     *,
     max_pages: int = DEFAULT_MAX_PAGES,
     headless: bool = DEFAULT_HEADLESS,
@@ -42,7 +42,7 @@ def run_crawl_for_url(
         JSCrawler(max_pages=max_pages, headless=headless),
         DOMChunker(),
         EmbeddingInputBuilder(),
-        DBStorage(db=db, system_user_id=system_user_id),
+        DBStorage(db=db, collection_id=collection_id),
     ])
 
     # TODO: persist crawled pages to Document and trigger process_document

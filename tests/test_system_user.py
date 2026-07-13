@@ -4,35 +4,10 @@ import argparse
 import json
 from unittest.mock import MagicMock
 
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from app.auth import generate_api_key, hash_api_key, verify_api_key
 from app.cli import cmd_create_system_user, main
-from app.config import get_settings
 from app.models import SystemUser
 from app.services.system_user import create_system_user
-
-
-@pytest.fixture
-def api_key_secret(monkeypatch: pytest.MonkeyPatch) -> str:
-    secret = "test-api-key-hash-secret"
-    monkeypatch.setenv("API_KEY_HASH_SECRET", secret)
-    get_settings.cache_clear()
-    yield secret
-    get_settings.cache_clear()
-
-
-@pytest.fixture
-def db_session(api_key_secret: str):
-    engine = create_engine("sqlite:///:memory:")
-    SystemUser.__table__.create(engine)
-    session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 def test_hash_api_key_is_deterministic(api_key_secret: str) -> None:
@@ -67,7 +42,7 @@ def test_cli_create_system_user(db_session, api_key_secret: str, monkeypatch, ca
     session_factory = MagicMock(return_value=db_session)
     monkeypatch.setattr("app.cli.SessionLocal", session_factory)
 
-    args = argparse.Namespace(name="CLI Tenant", ratelimit=150)
+    args = argparse.Namespace(name="CLI Tenant", ratelimit=150, collection=None)
     assert cmd_create_system_user(args) == 0
 
     output = json.loads(capsys.readouterr().out)
@@ -76,6 +51,7 @@ def test_cli_create_system_user(db_session, api_key_secret: str, monkeypatch, ca
     assert output["api_key"]
     assert output["id"]
     assert output["created_at"]
+    assert output["collections"] == []
 
 
 def test_cli_main_create_system_user(db_session, api_key_secret: str, monkeypatch, capsys) -> None:
@@ -87,3 +63,4 @@ def test_cli_main_create_system_user(db_session, api_key_secret: str, monkeypatc
     output = json.loads(capsys.readouterr().out)
     assert output["name"] == "Main Tenant"
     assert output["ratelimit"] == 100
+    assert output["collections"] == []

@@ -126,7 +126,7 @@ class DocumentProcessor(ABC):
                 db.add(
                     DocumentChunk(
                         document_id=document.id,
-                        system_user_id=document.system_user_id,
+                        collection_id=document.collection_id,
                         chunk_index=index,
                         content=chunk.content,
                         chunk_metadata=chunk.metadata or None,

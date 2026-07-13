@@ -1,10 +1,11 @@
-"""SQLAlchemy ORM models for system users, crawled documents, and related entities."""
+"""SQLAlchemy ORM models for system users, collections, crawled documents, and related entities."""
 
 from datetime import datetime
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, Uuid
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -20,17 +21,33 @@ class SystemUser(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
     ratelimit: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
 
-    documents: Mapped[list["Document"]] = relationship(back_populates="system_user")
-    document_chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="system_user")
+    collections: Mapped[list["Collection"]] = relationship(back_populates="system_user")
 
 
-class Document(Base):
-    __tablename__ = "documents"
-    __table_args__ = (UniqueConstraint("system_user_id", "url"),)
+class Collection(Base):
+    __tablename__ = "collections"
+    __table_args__ = (UniqueConstraint("system_user_id", "slug"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     system_user_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("system_users.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+
+    system_user: Mapped["SystemUser"] = relationship(back_populates="collections")
+    documents: Mapped[list["Document"]] = relationship(back_populates="collection")
+    chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="collection")
+
+
+class Document(Base):
+    __tablename__ = "documents"
+    __table_args__ = (UniqueConstraint("collection_id", "url"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    collection_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("collections.id"), nullable=False, index=True
     )
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -39,26 +56,33 @@ class Document(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
 
-    system_user: Mapped["SystemUser"] = relationship(back_populates="documents")
+    collection: Mapped["Collection"] = relationship(back_populates="documents")
     chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document")
 
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
-    __table_args__ = (UniqueConstraint("document_id", "chunk_index"),)
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index"),
+        Index(
+            "ix_document_chunks_metadata_gin",
+            "chunk_metadata",
+            postgresql_using="gin",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     document_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("documents.id"), nullable=False, index=True
     )
-    system_user_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("system_users.id"), nullable=False, index=True
+    collection_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("collections.id"), nullable=False, index=True
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    chunk_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    chunk_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
     chunk_vector: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
-    system_user: Mapped["SystemUser"] = relationship(back_populates="document_chunks")
+    collection: Mapped["Collection"] = relationship(back_populates="chunks")

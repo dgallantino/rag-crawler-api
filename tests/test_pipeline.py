@@ -22,10 +22,10 @@ def _make_processor() -> MarkdownProcessor:
 def test_process_document_success(
     db_session,
     test_user,
+    test_collection,
 ) -> None:
-    user, _ = test_user
     document = Document(
-        system_user_id=user.id,
+        collection_id=test_collection.id,
         url="file://pipeline.md",
         title="pipeline.md",
         content="# Pipeline\n\nContent.",
@@ -52,6 +52,7 @@ def test_process_document_success(
     chunks = db_session.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).all()
     assert len(chunks) == 2
     assert chunks[0].chunk_metadata == {"section_header": "Pipeline"}
+    assert chunks[0].collection_id == test_collection.id
 
     assert on_status.call_args_list == [
         ((DocumentStatusEvent(str(document.id), "chunking", "in_progress"),),),
@@ -66,10 +67,10 @@ def test_process_document_success(
 def test_process_document_failure(
     db_session,
     test_user,
+    test_collection,
 ) -> None:
-    user, _ = test_user
     document = Document(
-        system_user_id=user.id,
+        collection_id=test_collection.id,
         url="file://fail.md",
         title="fail.md",
         content="# Fail\n\nContent.",

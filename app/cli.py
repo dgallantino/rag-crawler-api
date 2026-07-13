@@ -7,6 +7,12 @@ from pathlib import Path
 from uuid import UUID
 
 from app.database import SessionLocal
+from app.services.collections import (
+    CollectionConflictError,
+    CollectionNotFoundError,
+    create_collection,
+    get_collection_by_slug,
+)
 from app.services.documents import validate_markdown_upload
 from app.services.documents import (
     DocumentConflictError,
@@ -55,10 +61,30 @@ def cmd_run_crawler(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_collection_arg(value: str) -> tuple[str, str | None]:
+    """Parse a 'name' or 'name:slug' collection argument into (name, slug)."""
+    if ":" in value:
+        name, slug = value.split(":", 1)
+        return name.strip(), slug.strip() or None
+    return value.strip(), None
+
+
 def cmd_create_system_user(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
         user, api_key = create_system_user(db, name=args.name, ratelimit=args.ratelimit)
+
+        collections_output = []
+        for raw in args.collection or []:
+            name, slug = _parse_collection_arg(raw)
+            try:
+                col = create_collection(db, user, name=name, slug=slug)
+            except CollectionConflictError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            collections_output.append(
+                {"id": str(col.id), "name": col.name, "slug": col.slug}
+            )
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -73,6 +99,7 @@ def cmd_create_system_user(args: argparse.Namespace) -> int:
                 "api_key": api_key,
                 "ratelimit": user.ratelimit,
                 "created_at": user.created_at.isoformat(),
+                "collections": collections_output,
             }
         )
     )
@@ -94,14 +121,18 @@ def cmd_upload_document(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
         user = get_system_user_by_name(db, args.name)
+        collection = get_collection_by_slug(db, user, args.collection_slug)
         document = create_document_upload(
             db,
-            user,
+            collection,
             path.name,
             content.decode("utf-8"),
         )
     except SystemUserLookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except CollectionNotFoundError as exc:
+        print(f"error: collection not found: {exc}", file=sys.stderr)
         return 1
     except DocumentConflictError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -151,11 +182,22 @@ def main(argv: list[str] | None = None) -> int:
         default=100,
         help="Requests-per-minute limit (default: 100)",
     )
+    create_parser.add_argument(
+        "--collection",
+        action="append",
+        metavar="NAME[:SLUG]",
+        help="Create a collection (repeatable); slug auto-derived from name when omitted",
+    )
     create_parser.set_defaults(func=cmd_create_system_user)
 
     upload_parser = subparsers.add_parser("upload-document", help="Upload a markdown document")
     upload_parser.add_argument("--path", required=True, help="Path to local .md file")
     upload_parser.add_argument("--name", required=True, help="System user name")
+    upload_parser.add_argument(
+        "--collection-slug",
+        required=True,
+        help="Slug of the collection to upload into",
+    )
     upload_parser.set_defaults(func=cmd_upload_document)
 
     status_parser = subparsers.add_parser("document-status", help="Check document processing status")
