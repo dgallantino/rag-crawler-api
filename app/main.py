@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from app.api.stubs import raise_not_implemented
 from app.api.agent import router as agent_router
 from app.api.collections import router as collections_router
 from app.api.documents import router as documents_router
@@ -57,4 +58,4 @@ app.include_router(agent_router, prefix=API_V1_PREFIX)
 
 @app.get("/", response_model=MessageResponse)
 def root() -> MessageResponse:
-    return MessageResponse(message="RAG Crawler API")
+    raise_not_implemented()
