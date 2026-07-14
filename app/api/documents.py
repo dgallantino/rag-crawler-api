@@ -5,24 +5,32 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.api.stubs import raise_not_implemented
 from app.database import get_db
 from app.dependencies.auth import get_current_system_user
 from app.models import SystemUser
 from app.schemas.documents import (
     DocumentStatusResponse,
+    DocumentUploadRequest,
     DocumentUploadResponse,
     DocumentValidationErrorResponse,
-)
-from app.services.collections import CollectionNotFoundError, get_collection
-from app.services.documents import validate_markdown_upload
-from app.services.documents import (
-    DocumentConflictError,
-    DocumentNotFoundError,
-    create_document_upload,
-    get_document_status,
+    validate_collection_identifier,
 )
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _validate_multipart_collection(
+    collection_id: UUID | None,
+    collection_slug: str | None,
+) -> None:
+    try:
+        validate_collection_identifier(collection_id, collection_slug)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.post(
@@ -33,46 +41,26 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 )
 async def upload_document(
     file: UploadFile = File(...),
-    collection_id: UUID = Form(...),
+    collection_id: UUID | None = Form(None),
+    collection_slug: str | None = Form(None),
     user: SystemUser = Depends(get_current_system_user),
     db: Session = Depends(get_db),
 ) -> DocumentUploadResponse:
-    content = await file.read()
-    filename = file.filename or "unknown.md"
+    _validate_multipart_collection(collection_id, collection_slug)
+    raise_not_implemented()
 
-    validation = validate_markdown_upload(filename, content)
-    if not validation.valid:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={"accepted": False, "reason": validation.reason},
-        )
 
-    try:
-        collection = get_collection(db, user, collection_id)
-    except CollectionNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Collection {collection_id} not found",
-        ) from exc
-
-    try:
-        document = create_document_upload(
-            db,
-            collection,
-            filename,
-            content.decode("utf-8"),
-        )
-    except DocumentConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
-
-    return DocumentUploadResponse(
-        document_id=document.id,
-        filename=filename,
-        accepted=True,
-    )
+@router.post(
+    "/json",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def upload_document_json(
+    body: DocumentUploadRequest,
+    user: SystemUser = Depends(get_current_system_user),
+    db: Session = Depends(get_db),
+) -> DocumentUploadResponse:
+    raise_not_implemented()
 
 
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)
@@ -81,10 +69,4 @@ def document_status(
     user: SystemUser = Depends(get_current_system_user),
     db: Session = Depends(get_db),
 ) -> DocumentStatusResponse:
-    try:
-        return get_document_status(db, user, document_id)
-    except DocumentNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document {document_id} not found",
-        ) from exc
+    raise_not_implemented()

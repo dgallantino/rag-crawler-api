@@ -188,8 +188,11 @@ class MarkdownProcessor(DocumentProcessor):
             section_header = _nearest_heading(position, headings)
             if section_header:
                 metadata["section_header"] = section_header
-            if headings:
-                metadata["all_headings"] = [heading_text for _, heading_text in headings]
+            chunk_headings = [
+                match.group(2).strip() for match in HEADING_PATTERN.finditer(chunk)
+            ]
+            if chunk_headings:
+                metadata["all_headings"] = chunk_headings
             if tags:
                 metadata["tags"] = tags
 
