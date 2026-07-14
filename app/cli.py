@@ -219,6 +219,11 @@ def _add_rag_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help='Optional JSON object of retrieval filters, e.g. \'{"metadata": {"doc_type": "contract"}}\'',
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results as JSON instead of human-readable text",
+    )
 
 
 def cmd_retrieve(args: argparse.Namespace) -> int:
@@ -267,16 +272,17 @@ def cmd_retrieve(args: argparse.Namespace) -> int:
     finally:
         db.close()
 
-    import json
+    if args.json:
+        print(result.model_dump_json())
+        return 0
 
-    # Pretty print each chunk's text from the results
     result_dict = result.model_dump()
     for i, res in enumerate(result_dict.get("results", []), 1):
         print(f"\nResult {i}:")
         print(f"score: {res['score']}")
-        print("="*80)
+        print("=" * 80)
         print(res["text"])
-        print("="*80)
+        print("=" * 80)
     print(f"latency_ms: {result_dict['latency_ms']}")
     print(f"top_k: {result_dict['top_k']}")
     print(f"reranked: {result_dict['reranked']}")

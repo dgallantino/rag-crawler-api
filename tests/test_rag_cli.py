@@ -34,6 +34,7 @@ def test_cli_retrieve(mock_retrieval, mock_answer, db_session, monkeypatch, caps
         top_k=3,
         rerank=False,
         filters=None,
+        json=True,
     )
     assert cmd_retrieve(args) == 0
     mock_answer.assert_not_called()
