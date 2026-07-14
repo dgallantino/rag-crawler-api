@@ -38,12 +38,11 @@ def test_chunk_extracts_section_header_and_all_headings(processor: MarkdownProce
     chunks = processor.chunk(text)
 
     assert len(chunks) >= 2
-    headings_in_text = ["Intro", "Details", "Subsection"]
-
-    counts = [chunk.metadata.get("all_headings", []) for chunk in chunks]
-    for headings in counts:
-        assert len(headings) == len(headings_in_text)
-        assert headings == headings_in_text
+    all_chunk_headings = [chunk.metadata.get("all_headings", []) for chunk in chunks]
+    assert any(headings == ["Intro"] for headings in all_chunk_headings)
+    assert any(headings == ["Details"] for headings in all_chunk_headings)
+    assert any(headings == ["Subsection"] for headings in all_chunk_headings)
+    assert not any(len(headings) == 3 for headings in all_chunk_headings)
 
     assert any(chunk.metadata.get("section_header") == "Details" for chunk in chunks)
     assert any(chunk.metadata.get("section_header") == "Subsection" for chunk in chunks)

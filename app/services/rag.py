@@ -14,7 +14,7 @@ from openai import OpenAI
 
 settings = get_settings()
 
-def rag_service(
+def retrieval_service(
     query: str,
     top_k: int,
     filters: dict | None,
@@ -22,12 +22,8 @@ def rag_service(
     *,
     use_rerank: bool = False,
     session: Session,
-) -> RagResponse:
-    """Retrieve relevant chunks for a query.
-
-    This is a black-box stub. The real implementation (embedding, vector
-    search, reranking) is out of scope and will be provided separately.
-    """
+) -> list[RetrievedChunk] | list[RerankedChunk]:
+    """Retrieve and optionally rerank relevant chunks for a query."""
     settings = get_settings()
     embed_fn = create_embed_fn(settings)
 
@@ -35,20 +31,25 @@ def rag_service(
     candidates = retrieve(
         query, initial_retrieve_k, filters, collection,
         session=session, embed_fn=embed_fn)
-    
-    if use_rerank:
-        candidates = rerank(query, candidates, top_k, rerank_service_fn=create_rerank_fn(settings))
-    else:
-        candidates = candidates[:top_k]
 
+    if use_rerank:
+        return rerank(query, candidates, top_k, rerank_service_fn=create_rerank_fn(settings))
+    return candidates[:top_k]
+
+
+def answer_service(
+    query: str,
+    candidates: list[RetrievedChunk] | list[RerankedChunk],
+) -> RagResponse:
+    """Turn retrieved chunks into context and generate a grounded answer."""
+    settings = get_settings()
     completion_client = create_openai_client(settings)
-    answer = answer_with_retrieval(
+    return answer_with_retrieval(
         query,
         normalize_chunks(candidates),
         completion_client,
         completion_model=settings.completion_model,
     )
-    return answer
 
 
 def create_openai_client(settings: Settings) -> OpenAI:
@@ -128,43 +129,4 @@ def create_markdown_processor(settings: Settings) -> MarkdownProcessor:
         chunk_overlap_percent=settings.chunk_overlap_percent,
     )
 
-
-def chunk_score(candidate: RetrievedChunk | RerankedChunk) -> float:
-    if isinstance(candidate, RerankedChunk):
-        return candidate.rerank_score
-    return candidate.similarity_score
-
-
-def to_retrieval_chunks(
-    candidates: list[RetrievedChunk] | list[RerankedChunk],
-) -> list[RetrievalChunk]:
-    results: list[RetrievalChunk] = []
-    for candidate in candidates:
-        chunk = candidate.chunk
-        results.append(
-            RetrievalChunk(
-                chunk_id=str(chunk.id),
-                text=chunk.content,
-                score=chunk_score(candidate),
-                source=ChunkSource(document=str(chunk.document_id)),
-            )
-        )
-    return results
-
-
-def to_retrieval_result(
-    candidates: list[RetrievedChunk] | list[RerankedChunk],
-    *,
-    query_used: str,
-    top_k: int,
-    reranked: bool,
-    latency_ms: int,
-) -> RetrievalResult:
-    return RetrievalResult(
-        results=to_retrieval_chunks(candidates),
-        query_used=query_used,
-        latency_ms=latency_ms,
-        top_k=top_k,
-        reranked=reranked,
-    )
 

@@ -69,6 +69,35 @@ def _parse_collection_arg(value: str) -> tuple[str, str | None]:
     return value.strip(), None
 
 
+def cmd_create_collection(args: argparse.Namespace) -> int:
+    db = SessionLocal()
+    try:
+        user = get_system_user_by_name(db, args.name)
+        name, slug = _parse_collection_arg(args.collection)
+        try:
+            col = create_collection(db, user, name=name, slug=slug)
+        except CollectionConflictError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    except SystemUserLookupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+
+    print(
+        json.dumps(
+            {
+                "id": str(col.id),
+                "name": col.name,
+                "slug": col.slug,
+                "system_user_id": str(col.system_user_id),
+            }
+        )
+    )
+    return 0
+
+
 def cmd_create_system_user(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
@@ -189,6 +218,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Create a collection (repeatable); slug auto-derived from name when omitted",
     )
     create_parser.set_defaults(func=cmd_create_system_user)
+
+    collection_parser = subparsers.add_parser(
+        "create-collection", help="Create a collection for an existing system user"
+    )
+    collection_parser.add_argument("--name", required=True, help="System user name")
+    collection_parser.add_argument(
+        "--collection",
+        required=True,
+        metavar="NAME[:SLUG]",
+        help="Collection name; slug auto-derived from name when omitted",
+    )
+    collection_parser.set_defaults(func=cmd_create_collection)
 
     upload_parser = subparsers.add_parser("upload-document", help="Upload a markdown document")
     upload_parser.add_argument("--path", required=True, help="Path to local .md file")

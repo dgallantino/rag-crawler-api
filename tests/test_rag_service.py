@@ -10,10 +10,11 @@ from app.config import Settings
 from app.rag.generation import RagResponse, ScoredChunk
 from app.rag.retrieval import RetrievedChunk
 from app.services.rag import (
+        answer_service,
         create_embed_fn,
         create_openai_client,
         create_rerank_fn,
-        rag_service,
+        retrieval_service,
     )
 
 
@@ -210,12 +211,11 @@ def test_create_rerank_fn_returns_empty_for_no_chunks() -> None:
     assert rerank("query", 3, []) == []
 
 
-def test_rag_retrieves_and_generates_answer(db_session, test_collection, monkeypatch):
+def test_retrieval_service_retrieves_chunks(db_session, test_collection, monkeypatch):
     _mock_rag_settings(monkeypatch)
     chunk = MagicMock()
     chunk.id = "chunk-1"
     retrieved = [RetrievedChunk(chunk=chunk, similarity_score=0.9)]
-    expected = RagResponse(answer="Generated answer", sources=[])
 
     retrieve_calls: list[dict] = []
 
@@ -236,16 +236,8 @@ def test_rag_retrieves_and_generates_answer(db_session, test_collection, monkeyp
         "app.services.rag.create_embed_fn",
         lambda settings: lambda text: [0.0] * 1536,
     )
-    monkeypatch.setattr(
-        "app.services.rag.create_openai_client",
-        lambda settings: MagicMock(),
-    )
-    monkeypatch.setattr(
-        "app.services.rag.answer_with_retrieval",
-        lambda query, chunks, client, *, completion_model: expected,
-    )
 
-    result = rag_service(
+    result = retrieval_service(
         query="What is the SLA?",
         top_k=3,
         filters={"metadata": {"doc_type": "contract"}},
@@ -253,7 +245,7 @@ def test_rag_retrieves_and_generates_answer(db_session, test_collection, monkeyp
         session=db_session,
     )
 
-    assert result == expected
+    assert result == retrieved
     assert retrieve_calls == [
         {
             "query": "What is the SLA?",
@@ -265,8 +257,28 @@ def test_rag_retrieves_and_generates_answer(db_session, test_collection, monkeyp
     ]
 
 
-def test_rag_does_not_call_rerank(db_session, monkeypatch):
-    """Rerank is not wired into the service yet."""
+def test_answer_service_generates_answer(monkeypatch):
+    _mock_rag_settings(monkeypatch)
+    chunk = MagicMock()
+    chunk.id = "chunk-1"
+    candidates = [RetrievedChunk(chunk=chunk, similarity_score=0.9)]
+    expected = RagResponse(answer="Generated answer", sources=[])
+
+    monkeypatch.setattr(
+        "app.services.rag.create_openai_client",
+        lambda settings: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.answer_with_retrieval",
+        lambda query, chunks, client, *, completion_model: expected,
+    )
+
+    result = answer_service(query="What is the SLA?", candidates=candidates)
+
+    assert result == expected
+
+
+def test_retrieval_service_does_not_call_rerank_by_default(db_session, monkeypatch):
     _mock_rag_settings(monkeypatch)
     rerank_called = False
 
@@ -277,21 +289,12 @@ def test_rag_does_not_call_rerank(db_session, monkeypatch):
 
     monkeypatch.setattr("app.services.rag.rerank", mock_rerank)
     monkeypatch.setattr("app.services.rag.retrieve", lambda *a, **k: [])
-    monkeypatch.setattr("app.services.rag.normalize_chunks", lambda chunks: [])
     monkeypatch.setattr(
         "app.services.rag.create_embed_fn",
         lambda settings: lambda text: [0.0] * 1536,
     )
-    monkeypatch.setattr(
-        "app.services.rag.create_openai_client",
-        lambda settings: MagicMock(),
-    )
-    monkeypatch.setattr(
-        "app.services.rag.answer_with_retrieval",
-        lambda *a, **k: RagResponse(answer="", sources=[]),
-    )
 
-    rag_service(
+    retrieval_service(
         query="q",
         top_k=1,
         filters=None,
