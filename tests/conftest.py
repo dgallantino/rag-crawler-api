@@ -90,9 +90,3 @@ def mock_redis_job_status(monkeypatch):
     monkeypatch.setattr("app.services.job_status.get_job_status", lambda document_id: None)
     monkeypatch.setattr("app.services.job_status.set_job_step", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.services.job_status.delete_job_status", lambda document_id: None)
-
-
-@pytest.fixture
-def auth_headers(test_user):
-    _, api_key = test_user
-    return {"X-API-Key": api_key}

@@ -1,4 +1,4 @@
-"""Tests for system user auth, provisioning, and CLI."""
+"""Tests for system user provisioning and CLI."""
 
 import argparse
 import json

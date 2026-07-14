@@ -7,8 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.api.stubs import raise_not_implemented
 from app.database import get_db
-from app.dependencies.auth import get_current_system_user
-from app.models import SystemUser
 from app.schemas.documents import (
     DocumentStatusResponse,
     DocumentUploadRequest,
@@ -43,7 +41,6 @@ async def upload_document(
     file: UploadFile = File(...),
     collection_id: UUID | None = Form(None),
     collection_slug: str | None = Form(None),
-    user: SystemUser = Depends(get_current_system_user),
     db: Session = Depends(get_db),
 ) -> DocumentUploadResponse:
     _validate_multipart_collection(collection_id, collection_slug)
@@ -57,7 +54,6 @@ async def upload_document(
 )
 def upload_document_json(
     body: DocumentUploadRequest,
-    user: SystemUser = Depends(get_current_system_user),
     db: Session = Depends(get_db),
 ) -> DocumentUploadResponse:
     raise_not_implemented()
@@ -66,7 +62,6 @@ def upload_document_json(
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)
 def document_status(
     document_id: UUID,
-    user: SystemUser = Depends(get_current_system_user),
     db: Session = Depends(get_db),
 ) -> DocumentStatusResponse:
     raise_not_implemented()

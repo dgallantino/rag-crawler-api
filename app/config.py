@@ -25,12 +25,6 @@ class Settings(BaseSettings):
     completion_model: str = "openai/gpt-4o-mini"
     rerank_model: str = "cohere/rerank-v3.5"
 
-    # RAG query API auth
-    internal_bearer_token: str = ""
-
-    # API key → tenant Redis cache
-    api_key_cache_ttl: int = 300
-
     # E2E test report output directory
     e2e_report_dir: str = "/tmp"
 
