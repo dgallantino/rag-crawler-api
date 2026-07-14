@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from app.services.documents import (
     create_document_upload,
     get_document_status,
 )
+from app.services.rag import answer_service, chunks_to_retrieval_result, retrieval_service
 from app.services.system_user import (
     SystemUserLookupError,
     create_system_user,
@@ -181,6 +183,148 @@ def cmd_upload_document(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_filters(value: str | None) -> dict | None:
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON for filters: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("filters must be a JSON object")
+    return parsed
+
+
+def _add_rag_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--query", required=True, help="Natural language query")
+    parser.add_argument("--name", required=True, help="System user name")
+    parser.add_argument(
+        "--collection-slug",
+        default=None,
+        help="Optional collection slug to restrict search to",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="Number of chunks to retrieve (default: 5)",
+    )
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Apply a reranking pass after vector retrieval",
+    )
+    parser.add_argument(
+        "--filters",
+        default=None,
+        help='Optional JSON object of retrieval filters, e.g. \'{"metadata": {"doc_type": "contract"}}\'',
+    )
+
+
+def cmd_retrieve(args: argparse.Namespace) -> int:
+    db = SessionLocal()
+    try:
+        user = get_system_user_by_name(db, args.name)
+        try:
+            filters = _parse_filters(args.filters)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        collection_id: str | None = None
+        if args.collection_slug is not None:
+            try:
+                collection = get_collection_by_slug(db, user, args.collection_slug)
+            except CollectionNotFoundError as exc:
+                print(f"error: collection not found: {exc}", file=sys.stderr)
+                return 1
+            collection_id = str(collection.id)
+
+        start = time.monotonic()
+        candidates = retrieval_service(
+            query=args.query,
+            top_k=args.top_k,
+            filters=filters,
+            collection=collection_id,
+            use_rerank=args.rerank,
+            session=db,
+        )
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+
+        result = chunks_to_retrieval_result(
+            args.query,
+            candidates,
+            top_k=args.top_k,
+            use_rerank=args.rerank,
+            latency_ms=elapsed_ms,
+        )
+    except SystemUserLookupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+
+    import json
+
+    # Pretty print each chunk's text from the results
+    result_dict = result.model_dump()
+    for i, res in enumerate(result_dict.get("results", []), 1):
+        print(f"\nResult {i}:")
+        print(f"score: {res['score']}")
+        print("="*80)
+        print(res["text"])
+        print("="*80)
+    print(f"latency_ms: {result_dict['latency_ms']}")
+    print(f"top_k: {result_dict['top_k']}")
+    print(f"reranked: {result_dict['reranked']}")
+    print(f"query_used: {result_dict['query_used']}")
+    return 0
+
+
+def cmd_query(args: argparse.Namespace) -> int:
+    db = SessionLocal()
+    try:
+        user = get_system_user_by_name(db, args.name)
+        try:
+            filters = _parse_filters(args.filters)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        collection_id: str | None = None
+        if args.collection_slug is not None:
+            try:
+                collection = get_collection_by_slug(db, user, args.collection_slug)
+            except CollectionNotFoundError as exc:
+                print(f"error: collection not found: {exc}", file=sys.stderr)
+                return 1
+            collection_id = str(collection.id)
+
+        candidates = retrieval_service(
+            query=args.query,
+            top_k=args.top_k,
+            filters=filters,
+            collection=collection_id,
+            use_rerank=args.rerank,
+            session=db,
+        )
+        response = answer_service(args.query, candidates)
+    except SystemUserLookupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+
+    print(response.model_dump_json())
+    return 0
+
+
 def cmd_document_status(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
@@ -245,6 +389,16 @@ def main(argv: list[str] | None = None) -> int:
     status_parser.add_argument("--document-id", required=True, help="Document UUID")
     status_parser.add_argument("--name", required=True, help="System user name")
     status_parser.set_defaults(func=cmd_document_status)
+
+    retrieve_parser = subparsers.add_parser("retrieve", help="Retrieve relevant chunks for a query")
+    _add_rag_args(retrieve_parser)
+    retrieve_parser.set_defaults(func=cmd_retrieve)
+
+    query_parser = subparsers.add_parser(
+        "query", help="Retrieve relevant chunks and generate a grounded answer"
+    )
+    _add_rag_args(query_parser)
+    query_parser.set_defaults(func=cmd_query)
 
     from app.crawler.settings import DEFAULT_MAX_PAGES
 

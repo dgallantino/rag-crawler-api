@@ -37,6 +37,43 @@ def retrieval_service(
     return candidates[:top_k]
 
 
+def _chunk_to_retrieval_chunk(item: RetrievedChunk | RerankedChunk) -> RetrievalChunk:
+    chunk = item.chunk
+    meta = chunk.chunk_metadata or {}
+    source = None
+    if chunk.document is not None:
+        source = ChunkSource(
+            document=chunk.document.title,
+            page=meta.get("page"),
+            url=chunk.document.url,
+        )
+    score = getattr(item, "rerank_score", item.similarity_score)
+    return RetrievalChunk(
+        chunk_id=str(chunk.id),
+        text=chunk.content,
+        score=score,
+        source=source,
+    )
+
+
+def chunks_to_retrieval_result(
+    query: str,
+    chunks: list[RetrievedChunk] | list[RerankedChunk],
+    *,
+    top_k: int,
+    use_rerank: bool,
+    latency_ms: int | None = None,
+) -> RetrievalResult:
+    """Shape retrieved chunks into the API RetrievalResult schema."""
+    return RetrievalResult(
+        results=[_chunk_to_retrieval_chunk(chunk) for chunk in chunks],
+        query_used=query,
+        latency_ms=latency_ms,
+        top_k=top_k,
+        reranked=use_rerank,
+    )
+
+
 def answer_service(
     query: str,
     candidates: list[RetrievedChunk] | list[RerankedChunk],
