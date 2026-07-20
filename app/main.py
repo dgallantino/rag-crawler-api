@@ -4,7 +4,6 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from app.api.stubs import raise_not_implemented
@@ -14,7 +13,7 @@ from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.query import router as query_router
 from app.config import get_settings
-from app.database import Base, engine
+from app.database import create_all_tables
 from app.exceptions import register_exception_handlers
 import app.models  # noqa: F401 — register ORM models with Base.metadata
 from app.middleware.request_id import RequestIDMiddleware
@@ -30,9 +29,7 @@ async def lifespan(app: FastAPI):
     # Dev convenience: auto-create tables. Replace with Alembic migrations later.
     if get_settings().app_env == "development":
         try:
-            with engine.begin() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            Base.metadata.create_all(bind=engine)
+            create_all_tables()
         except OperationalError:
             logger.warning("Database unavailable; skipping table creation")
     yield

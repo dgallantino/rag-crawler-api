@@ -17,6 +17,8 @@ Domain logic for RAG (chunk → embed → retrieve → rerank → answer) and th
 
 ## What works today
 
+User-facing technical reference: [RAG.md](RAG.md).
+
 ```mermaid
 flowchart LR
   CLI[CLI upload] --> Doc[Document row]
