@@ -7,7 +7,9 @@ import time
 from pathlib import Path
 from uuid import UUID
 
-from app.database import SessionLocal
+from app.config import get_settings
+from app.database import SessionLocal, create_all_tables, drop_all_tables
+import app.models  # noqa: F401 — register ORM models with Base.metadata
 from app.services.collections import (
     CollectionConflictError,
     CollectionNotFoundError,
@@ -350,6 +352,40 @@ def cmd_document_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _require_development() -> int | None:
+    if get_settings().app_env != "development":
+        print(
+            "error: db schema commands only allowed when APP_ENV=development",
+            file=sys.stderr,
+        )
+        return 1
+    return None
+
+
+def cmd_db_create_all(args: argparse.Namespace) -> int:
+    if (err := _require_development()) is not None:
+        return err
+    try:
+        create_all_tables()
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print("tables created")
+    return 0
+
+
+def cmd_db_delete_all(args: argparse.Namespace) -> int:
+    if (err := _require_development()) is not None:
+        return err
+    try:
+        drop_all_tables()
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print("tables dropped")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="RAG Crawler API administrative CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -406,6 +442,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_rag_args(query_parser)
     query_parser.set_defaults(func=cmd_query)
+
+    db_parser = subparsers.add_parser(
+        "db", help="Development database schema helpers (APP_ENV=development only)"
+    )
+    db_subparsers = db_parser.add_subparsers(dest="db_command", required=True)
+
+    db_create_parser = db_subparsers.add_parser(
+        "create-all", help="Create the vector extension and all ORM tables"
+    )
+    db_create_parser.set_defaults(func=cmd_db_create_all)
+
+    db_delete_parser = db_subparsers.add_parser(
+        "delete-all", help="Drop all ORM tables"
+    )
+    db_delete_parser.set_defaults(func=cmd_db_delete_all)
 
     from app.crawler.settings import DEFAULT_MAX_PAGES
 
