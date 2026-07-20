@@ -36,6 +36,7 @@ def cmd_run_crawler(args: argparse.Namespace) -> int:
     It will be removed once the pipeline is fully implemented.
     or replaced with a production-grade command
     """
+    raise NotImplementedError("Crawler pipeline is not implemented yet")
     from app.crawler.pipeline import DataRetrieverError
     from app.crawler.runner import count_crawl_results, run_crawl_debug
     from app.crawler.settings import DEFAULT_MAX_PAGES

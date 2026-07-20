@@ -14,24 +14,6 @@ A scaffold for a web-crawling and RAG (Retrieval-Augmented Generation) API. This
 | RAG | Custom pipeline |
 | Tests | pytest |
 
-## Project Structure
-
-```
-app/
-├── main.py          # FastAPI entry point
-├── config.py        # Environment settings
-├── database.py      # SQLAlchemy engine and session
-├── models.py        # ORM models
-├── jobs.py          # Celery tasks
-├── services.py      # Business logic layer
-├── utils.py         # Shared helpers
-├── api/             # HTTP route handlers
-├── schemas/         # Pydantic request/response models
-├── crawler/         # Composable crawl pipeline library
-└── rag/             # RAG pipeline
-tests/               # pytest suite
-```
-
 ## Quick Start (Local)
 
 ```bash
