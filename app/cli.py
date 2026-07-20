@@ -119,24 +119,24 @@ def cmd_create_system_user(args: argparse.Namespace) -> int:
             collections_output.append(
                 {"id": str(col.id), "name": col.name, "slug": col.slug}
             )
+        print(
+            json.dumps(
+                {
+                    "id": str(user.id),
+                    "name": user.name,
+                    "api_key": api_key,
+                    "ratelimit": user.ratelimit,
+                    "created_at": user.created_at.isoformat(),
+                    "collections": collections_output,
+                }
+            )
+        )
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:
         db.close()
 
-    print(
-        json.dumps(
-            {
-                "id": str(user.id),
-                "name": user.name,
-                "api_key": api_key,
-                "ratelimit": user.ratelimit,
-                "created_at": user.created_at.isoformat(),
-                "collections": collections_output,
-            }
-        )
-    )
     return 0
 
 
