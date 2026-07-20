@@ -1,6 +1,6 @@
 # RAG Crawler API
 
-A scaffold for a web-crawling and RAG (Retrieval-Augmented Generation) API. This repo provides the initial project structure and stub code — not a complete implementation.
+A RAG (Retrieval-Augmented Generation) system with a defined HTTP API contract and a working offline pipeline (CLI + Celery). The RAG pipeline indexes markdown documents, stores vectors in PostgreSQL/pgvector, and supports semantic retrieval with optional reranking and LLM-grounded answers. HTTP business routes are defined but not yet implemented — handlers return 501.
 
 ## Tech Stack
 
@@ -8,11 +8,95 @@ A scaffold for a web-crawling and RAG (Retrieval-Augmented Generation) API. This
 |-------|------------|
 | API | FastAPI |
 | Validation | Pydantic |
-| Database | SQLAlchemy + PostgreSQL |
+| Database | SQLAlchemy + PostgreSQL + pgvector |
 | Background jobs | Celery + Redis |
-| Crawler | Custom pipeline (Playwright + BeautifulSoup) |
+| Embeddings / completions / rerank | OpenRouter (OpenAI SDK + HTTP rerank API) |
+| Crawler | Custom pipeline (Playwright + BeautifulSoup) — skeletal, not wired |
 | RAG | Custom pipeline |
-| Tests | pytest |
+| Tests | pytest + testcontainers |
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph working [Working today]
+    CLI[CLI upload] --> Doc[Document]
+    Doc --> Celery[Celery process_document]
+    Celery --> Chunks[DocumentChunk + pgvector]
+    Chunks --> Query[CLI retrieve/query]
+  end
+  subgraph planned [Planned]
+    Crawl[Crawler] -.-> Doc
+    HTTP["/v1/* routes"] -.-> Query
+  end
+```
+
+## Implementation Status
+
+| Component | Status |
+|-----------|--------|
+| RAG pipeline (chunk, embed, store, retrieve, rerank, answer) | Working via CLI + Celery |
+| Document / collection / system-user services | Working via CLI |
+| Celery `run_process_document` | Working |
+| Health endpoints (`/health`, `/health/db`) | Working |
+| REST `/v1/*` business routes | Contract defined; handlers return 501 |
+| Crawler library | Skeletal; not wired to API, Celery, or DB |
+| Auth, Alembic migrations, CI | Planned |
+
+See [docs/RAG.md](docs/RAG.md) for RAG technical details and [docs/ROADMAP.md](docs/ROADMAP.md) for planned work.
+
+## API (Contract Only)
+
+The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI route decorators in `app/api/`. OpenAPI is auto-generated at `/docs` when the server is running. The service layer behind these routes is implemented and exercised via the CLI; only the HTTP handlers are missing.
+
+| Method | Path | Request → Response | Status |
+|--------|------|--------------------|--------|
+| `GET` | `/health` | — → `HealthResponse` | Working |
+| `GET` | `/health/db` | — → `HealthResponse` | Working |
+| `POST` | `/v1/collections` | `CollectionCreateRequest` → `CollectionCreateResponse` | 501 |
+| `POST` | `/v1/documents` | multipart upload → `DocumentUploadResponse` | 501 |
+| `POST` | `/v1/documents/json` | `DocumentUploadRequest` → `DocumentUploadResponse` | 501 |
+| `GET` | `/v1/documents/{id}/status` | — → `DocumentStatusResponse` | 501 |
+| `POST` | `/v1/query` | `BackendQueryRequest` → `RagResponse` | 501 |
+| `POST` | `/v1/agent/search` | `AgentSearchRequest` → `AgentRetrievalResult` | 501 |
+
+`POST /v1/query` returns a grounded answer plus source citations. `POST /v1/agent/search` returns retrieved chunks only (no LLM answer).
+
+## CLI (Development / Debugging)
+
+The CLI is a development and debugging tool for exercising the system internals. It is not the production interface.
+
+```bash
+python -m app.cli <command> [options]
+```
+
+| Command | Purpose |
+|---------|---------|
+| `create-system-user` | Provision a tenant and API key; optionally create collections |
+| `create-collection` | Create a collection for an existing system user |
+| `upload-document` | Upload a `.md` file to a collection (triggers Celery indexing) |
+| `document-status` | Poll document processing status |
+| `retrieve` | Vector search over indexed chunks; use `--rerank` for reranking |
+| `query` | Retrieval + LLM-grounded answer |
+| `db create-all` | Create tables (`APP_ENV=development` only) |
+| `db delete-all` | Drop tables (`APP_ENV=development` only) |
+
+Shared flags for `retrieve` and `query`: `--query`, `--name`, `--collection-slug`, `--top-k`, `--rerank`, `--filters`, `--json`.
+
+Example workflow:
+
+```bash
+python -m app.cli create-system-user --name dev --collection "My Docs"
+python -m app.cli upload-document --path doc.md --name dev --collection-slug my-docs
+python -m app.cli document-status --document-id <uuid> --name dev
+python -m app.cli query --query "What is X?" --name dev --collection-slug my-docs
+```
+
+Requires `OPENROUTER_API_KEY` in `.env` for embeddings, reranking, and answer generation.
+
+## Crawler (Planned)
+
+A Playwright-based crawler pipeline library exists under `app/crawler/` but is not wired to persistence, Celery, or HTTP. See [docs/ROADMAP_CRAWLER.md](docs/ROADMAP_CRAWLER.md) for planned integration work.
 
 ## Quick Start (Local)
 
@@ -22,11 +106,18 @@ source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 cp .env.example .env
+# Start postgres + redis (or use docker compose for infra only)
 uvicorn app.main:app --reload --port 8000
 ```
 
 - API docs: http://localhost:8000/docs
 - Health check: http://localhost:8000/health
+
+For indexing and querying, also start a Celery worker:
+
+```bash
+celery -A app.celery_app worker --loglevel=info
+```
 
 ## Quick Start (Docker)
 
@@ -53,54 +144,11 @@ By default, live e2e tests (real OpenRouter calls) are **excluded**. To run them
 RUN_E2E=1 pytest -m e2e
 ```
 
-E2e tests write a YAML test report (request, response, database dumps) to `E2E_REPORT_DIR` from `.env`, or `/tmp` if unset. Example: `/tmp/e2e_query_20260712T135600Z_test_query_backend_live_openrouter.yaml`.
+E2e tests write a YAML test report (request, response, database dumps) to `E2E_REPORT_DIR` from `.env`, or `/tmp` if unset.
 
-## What's Implemented vs Stubbed
+## Planned Work
 
-| Component | Status |
-|-----------|--------|
-| FastAPI app + health endpoint | Working |
-| Settings from `.env` | Working |
-| SQLAlchemy models + session | Stub (tables auto-created in dev) |
-| Celery tasks | Partial (process_document working; crawl_url scaffold) |
-| Custom crawler | Pipeline library (CLI debug available) |
-| RAG pipeline | Working (chunk, embed, store) |
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full milestone plan. Scoped roadmaps:
 
-## Crawler CLI (local debugging)
-
-Run the default pipeline (`JSCrawler → DOMChunker → ChunkPrinter`) without DB or API keys:
-
-```bash
-python -m app.cli run-crawler --url https://example.com
-python -m app.cli run-crawler --url https://example.com --max-pages 5 --no-headless
-```
-
-Requires `playwright install chromium` after `pip install`.
-
-Production code should compose `Pipeline([...])` directly (see `app/services/crawl.py`), not import `app/crawler/runner.py`.
-
-## Developer Notes — Planned Work (by priority)
-
-### 1. Database migrations (Alembic)
-
-Replace `Base.metadata.create_all()` with versioned migrations. Set up Alembic, generate an initial migration for the `Document` model, and wire `alembic upgrade head` into Docker startup. This is the foundation for any schema changes.
-
-### 2. Custom crawler integration
-
-Wire `DBStorage` to persist crawled pages to the `Document` model and chain `trigger_process_document`. Add `POST /crawl` API route. See `app/services/crawl.py` for the production pipeline skeleton.
-
-### 3. RAG pipeline
-
-Implement `RAGPipeline.index()` to chunk documents, generate embeddings, and store vectors. Implement `query()` for semantic search and optional LLM-augmented answers. Choose and integrate a vector store (e.g. pgvector, Chroma, Pinecone).
-
-### 4. API endpoints for crawl and query
-
-Add routes to trigger crawls (`POST /crawl`), list documents, and run RAG queries (`POST /query`). Wire routes through `services.py` with proper Pydantic schemas and error handling.
-
-### 5. Auth, rate limiting, and production hardening
-
-Add API key or OAuth authentication, request rate limits, structured logging, health checks that verify DB/Redis connectivity, and environment-specific config (no `create_all` in production).
-
-### 6. CI/CD
-
-GitHub Actions (or similar) for lint, test, and Docker image build/push on every PR and merge to main.
+- [docs/ROADMAP_RAG.md](docs/ROADMAP_RAG.md) — retrieval, generation, document indexing, query/agent API
+- [docs/ROADMAP_CRAWLER.md](docs/ROADMAP_CRAWLER.md) — crawl pipeline, persist/ingest, crawl API
