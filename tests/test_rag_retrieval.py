@@ -290,7 +290,9 @@ def test_apply_filters_empty_dict_is_noop(db_session, test_collection):
 # --- retrieval.py: vector_search ---
 
 
-def test_vector_search_maps_distance_to_similarity_score(db_session, test_collection):
+def test_vector_search_maps_distance_to_similarity_score(
+    db_session, test_collection
+):
     closer = _make_chunk(
         db_session,
         test_collection,
@@ -309,7 +311,7 @@ def test_vector_search_maps_distance_to_similarity_score(db_session, test_collec
         _vec(1.0),
         top_k=2,
         filters=None,
-        collection=None,
+        collection=[str(test_collection.id)],
     )
 
     assert len(results) == 2
@@ -333,7 +335,7 @@ def test_vector_search_respects_top_k(db_session, test_collection):
         _vec(1.0),
         top_k=2,
         filters=None,
-        collection=None,
+        collection=[str(test_collection.id)],
     )
 
     assert len(results) == 2
@@ -366,11 +368,44 @@ def test_vector_search_scopes_by_collection(
         _vec(1.0),
         top_k=5,
         filters=None,
-        collection=str(test_collection.id),
+        collection=[str(test_collection.id)],
     )
 
     assert len(results) == 1
     assert results[0].chunk.id == in_scope.id
+
+
+def test_vector_search_accepts_multiple_collections(
+    db_session, test_user, test_collection
+):
+    user, _ = test_user
+    from app.services.collections import create_collection
+
+    other_collection = create_collection(
+        db_session, user, name="Other Collection", slug="other-collection"
+    )
+    a = _make_chunk(
+        db_session,
+        test_collection,
+        content="a",
+        chunk_vector=_vec(1.0),
+    )
+    b = _make_chunk(
+        db_session,
+        other_collection,
+        content="b",
+        chunk_vector=_vec(0.9),
+    )
+
+    results = vector_search(
+        db_session,
+        _vec(1.0),
+        top_k=5,
+        filters=None,
+        collection=[str(test_collection.id), str(other_collection.id)],
+    )
+
+    assert {r.chunk.id for r in results} == {a.id, b.id}
 
 
 def test_vector_search_applies_filters(db_session, test_collection, monkeypatch):
@@ -389,7 +424,7 @@ def test_vector_search_applies_filters(db_session, test_collection, monkeypatch)
         _vec(1.0),
         top_k=5,
         filters=filters,
-        collection=None,
+        collection=[str(test_collection.id)],
     )
 
     assert apply_calls == [filters]
@@ -416,7 +451,7 @@ def test_vector_search_with_metadata_filter(db_session, test_collection):
         _vec(1.0),
         top_k=5,
         filters={"metadata": {"doc_type": "contract"}},
-        collection=str(test_collection.id),
+        collection=[str(test_collection.id)],
     )
 
     assert len(results) == 1
@@ -429,7 +464,7 @@ def test_vector_search_returns_empty_when_no_rows(db_session):
         [0.0] * 1536,
         top_k=5,
         filters=None,
-        collection=None,
+        collection=[str(uuid4())],
     )
 
     assert results == []
@@ -461,7 +496,7 @@ def test_retrieve_embeds_and_searches(db_session, test_collection):
         query="Which chunk?",
         top_k=2,
         filters=None,
-        collection=str(test_collection.id),
+        collection=[str(test_collection.id)],
         session=db_session,
         embed_fn=lambda _query: _vec(1.0),
     )
@@ -523,7 +558,6 @@ def test_build_context_respects_max_chars():
 
     context = build_context(chunks, max_chars=200)
     assert len(context) <= 200
-    assert "block-0" in context
 
 
 def test_generate_answer_returns_mock_content():

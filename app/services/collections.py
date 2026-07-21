@@ -70,17 +70,30 @@ def get_collection(db: Session, user: SystemUser, collection_id: UUID) -> Collec
     return collection
 
 
-def get_collection_by_slug(db: Session, user: SystemUser, slug: str) -> Collection:
-    """Fetch a collection by slug, scoped to the given user.
+def get_collection_by_slug(
+    db: Session, user: SystemUser, slug: str | None = None
+) -> list[Collection]:
+    """Fetch collections for a user, optionally filtered by slug.
+
+    When ``slug`` is set, returns that single collection (scoped to ``user``).
+    When ``slug`` is ``None``, returns all collections owned by ``user``.
 
     Raises:
         CollectionNotFoundError: If no matching collection is found.
     """
-    collection = (
-        db.query(Collection)
-        .filter(Collection.slug == slug, Collection.system_user_id == user.id)
-        .one_or_none()
+    if slug is not None:
+        collection = (
+            db.query(Collection)
+            .filter(Collection.slug == slug, Collection.system_user_id == user.id)
+            .one_or_none()
+        )
+        if collection is None:
+            raise CollectionNotFoundError(f"slug='{slug}'")
+        return [collection]
+
+    collections = (
+        db.query(Collection).filter(Collection.system_user_id == user.id).all()
     )
-    if collection is None:
-        raise CollectionNotFoundError(f"slug='{slug}'")
-    return collection
+    if not collections:
+        raise CollectionNotFoundError(f"no collections for user id={user.id}")
+    return collections

@@ -88,7 +88,8 @@ def test_rag_service_live_openrouter(
             query=query,
             top_k=3,
             filters=None,
-            collection=str(test_collection.id),
+            user=user,
+            collection_slug="test-collection",
             use_rerank=False,
             session=db_session,
         )

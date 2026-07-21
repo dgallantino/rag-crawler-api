@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, Callable
+from typing import Callable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -46,20 +46,23 @@ def vector_search(
     *,
     top_k: int,
     filters: dict | None,
-    collection: str | None,
+    collection: list[str],
 ) -> list[RetrievedChunk]:
-    """Run a pgvector similarity search and return the top_k chunks."""
+    """Run a pgvector similarity search and return the top_k chunks.
+
+    ``collection`` is one or more collection UUIDs resolved by the service
+    layer (tenant scoping happens there, not here).
+    """
+    collection_ids = [UUID(c) for c in collection]
     stmt = (
         select(
             DocumentChunk,
             DocumentChunk.chunk_vector.cosine_distance(query_vector).label("distance"),
         )
+        .where(DocumentChunk.collection_id.in_(collection_ids))
         .order_by("distance")
         .limit(top_k)
     )
-
-    if collection is not None:
-        stmt = stmt.where(DocumentChunk.collection_id == UUID(collection))
 
     if filters:
         stmt = _apply_filters(stmt, filters)
@@ -77,7 +80,6 @@ def _apply_filters(stmt, filters: dict):
     `filters` follows the API layer's Filters model:
         {
             "metadata": dict[str, Any] | None,
-            "owner_ref": str | None,
             "date_range": {"after": date | None, "before": date | None} | None,
         }
     """
@@ -99,7 +101,6 @@ def _apply_filters(stmt, filters: dict):
                 before = datetime.combine(before, time.max)
             stmt = stmt.where(DocumentChunk.created_at <= before)
 
-    # owner_ref: silently skipped until Document.owner_ref column exists
 
     return stmt
 
@@ -116,19 +117,12 @@ def retrieve(
     query: str,
     top_k: int,
     filters: dict | None,
-    collection: str | None,
+    collection: list[str],
     *,
     session: Session,
     embed_fn: EmbedFn,
 ) -> list[RetrievedChunk]:
-    """Entry point matching the service-layer stub, minus `user_id`.
-
-    Orchestrates retrieval -> optional rerank -> generation. This is the
-    only function `app.rag` should expose to the service layer.
-
-    When rerank=True, fetches top_k * 4 candidates from vector search
-    before reranking down to top_k.
-    """
+    """Embed the query and return similarity candidates for ``collection``."""
 
     query_vector = embed_query(query, embed_fn)
 

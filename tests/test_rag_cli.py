@@ -18,7 +18,7 @@ from app.services.system_user import create_system_user
 def test_cli_retrieve(mock_retrieval, mock_answer, db_session, monkeypatch, capsys) -> None:
     monkeypatch.setattr("app.cli.SessionLocal", MagicMock(return_value=db_session))
     user, _ = create_system_user(db_session, name="Dev User")
-    collection = create_collection(db_session, user, name="Dev Docs", slug="dev-docs")
+    create_collection(db_session, user, name="Dev Docs", slug="dev-docs")
 
     chunk = MagicMock()
     chunk.id = "chunk-1"
@@ -50,7 +50,8 @@ def test_cli_retrieve(mock_retrieval, mock_answer, db_session, monkeypatch, caps
         query="What is the SLA?",
         top_k=3,
         filters=None,
-        collection=str(collection.id),
+        user=user,
+        collection_slug="dev-docs",
         use_rerank=False,
         session=db_session,
     )
@@ -88,7 +89,8 @@ def test_cli_query(mock_retrieval, mock_answer, db_session, monkeypatch, capsys)
         query="What is the SLA?",
         top_k=5,
         filters={"metadata": {"doc_type": "contract"}},
-        collection=None,
+        user=user,
+        collection_slug=None,
         use_rerank=True,
         session=db_session,
     )

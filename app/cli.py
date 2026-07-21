@@ -155,7 +155,7 @@ def cmd_upload_document(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
         user = get_system_user_by_name(db, args.name)
-        collection = get_collection_by_slug(db, user, args.collection_slug)
+        collection = get_collection_by_slug(db, user, args.collection_slug)[0]
         document = create_document_upload(
             db,
             collection,
@@ -239,21 +239,13 @@ def cmd_retrieve(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-        collection_id: str | None = None
-        if args.collection_slug is not None:
-            try:
-                collection = get_collection_by_slug(db, user, args.collection_slug)
-            except CollectionNotFoundError as exc:
-                print(f"error: collection not found: {exc}", file=sys.stderr)
-                return 1
-            collection_id = str(collection.id)
-
         start = time.monotonic()
         candidates = retrieval_service(
             query=args.query,
             top_k=args.top_k,
             filters=filters,
-            collection=collection_id,
+            user=user,
+            collection_slug=args.collection_slug,
             use_rerank=args.rerank,
             session=db,
         )
@@ -268,6 +260,9 @@ def cmd_retrieve(args: argparse.Namespace) -> int:
         )
     except SystemUserLookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except CollectionNotFoundError as exc:
+        print(f"error: collection not found: {exc}", file=sys.stderr)
         return 1
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -303,26 +298,21 @@ def cmd_query(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-        collection_id: str | None = None
-        if args.collection_slug is not None:
-            try:
-                collection = get_collection_by_slug(db, user, args.collection_slug)
-            except CollectionNotFoundError as exc:
-                print(f"error: collection not found: {exc}", file=sys.stderr)
-                return 1
-            collection_id = str(collection.id)
-
         candidates = retrieval_service(
             query=args.query,
             top_k=args.top_k,
             filters=filters,
-            collection=collection_id,
+            user=user,
+            collection_slug=args.collection_slug,
             use_rerank=args.rerank,
             session=db,
         )
         response = answer_service(args.query, candidates)
     except SystemUserLookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except CollectionNotFoundError as exc:
+        print(f"error: collection not found: {exc}", file=sys.stderr)
         return 1
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
