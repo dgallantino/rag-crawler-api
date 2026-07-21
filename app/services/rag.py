@@ -93,6 +93,8 @@ def chunks_to_retrieval_result(
 def answer_service(
     query: str,
     candidates: list[RetrievedChunk] | list[RerankedChunk],
+    *,
+    max_tokens_context: int | None = None,
 ) -> RagResponse:
     """Turn retrieved chunks into context and generate a grounded answer."""
     settings = get_settings()
@@ -102,6 +104,7 @@ def answer_service(
         normalize_chunks(candidates),
         completion_client,
         completion_model=settings.completion_model,
+        max_tokens_context=max_tokens_context,
     )
 
 

@@ -229,6 +229,16 @@ def _add_rag_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_query_args(parser: argparse.ArgumentParser) -> None:
+    _add_rag_args(parser)
+    parser.add_argument(
+        "--max-tokens-context",
+        type=int,
+        default=None,
+        help="Optional cap on total tokens included in the LLM context",
+    )
+
+
 def cmd_retrieve(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
@@ -307,7 +317,11 @@ def cmd_query(args: argparse.Namespace) -> int:
             use_rerank=args.rerank,
             session=db,
         )
-        response = answer_service(args.query, candidates)
+        response = answer_service(
+            args.query,
+            candidates,
+            max_tokens_context=args.max_tokens_context,
+        )
     except SystemUserLookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -430,7 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     query_parser = subparsers.add_parser(
         "query", help="Retrieve relevant chunks and generate a grounded answer"
     )
-    _add_rag_args(query_parser)
+    _add_query_args(query_parser)
     query_parser.set_defaults(func=cmd_query)
 
     db_parser = subparsers.add_parser(

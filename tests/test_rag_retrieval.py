@@ -547,17 +547,24 @@ def test_build_context_deduplicates_content():
     assert context.count("duplicate text") == 1
 
 
-def test_build_context_respects_max_chars():
+def test_build_context_respects_max_tokens(monkeypatch):
+    monkeypatch.setattr(
+        "app.rag.generation._token_length",
+        lambda text: len(text),
+    )
     chunks = []
     for i in range(5):
         c = MagicMock()
         c.document_id = uuid4()
         c.chunk_index = i
-        c.content = f"block-{i}-" + ("x" * 50)
+        c.content = f"block-{i}"
         chunks.append(_scored(c, 1.0 - i * 0.1))
 
-    context = build_context(chunks, max_chars=200)
-    assert len(context) <= 200
+    # First block alone is ~"[source: uuid#0]\nblock-0" (~50 chars); budget fits one.
+    context = build_context(chunks, max_tokens=60)
+    assert "block-0" in context
+    assert "block-4" not in context
+    assert len(context) <= 60
 
 
 def test_generate_answer_returns_mock_content():

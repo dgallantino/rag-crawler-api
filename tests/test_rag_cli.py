@@ -79,12 +79,17 @@ def test_cli_query(mock_retrieval, mock_answer, db_session, monkeypatch, capsys)
         top_k=5,
         rerank=True,
         filters='{"metadata": {"doc_type": "contract"}}',
+        max_tokens_context=None,
     )
     assert cmd_query(args) == 0
 
     output = json.loads(capsys.readouterr().out)
     assert output["answer"] == "Enterprise SLA is 99.9% uptime"
-    mock_answer.assert_called_once_with("What is the SLA?", candidates)
+    mock_answer.assert_called_once_with(
+        "What is the SLA?",
+        candidates,
+        max_tokens_context=None,
+    )
     mock_retrieval.assert_called_once_with(
         query="What is the SLA?",
         top_k=5,

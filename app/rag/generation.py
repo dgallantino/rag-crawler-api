@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from app.models import DocumentChunk
+from app.rag.processor import _token_length
 from app.rag.rerank import RerankedChunk
 from app.rag.retrieval import RetrievedChunk
 
@@ -50,16 +51,20 @@ def normalize_chunks(chunks: list[RetrievedChunk] | list[RerankedChunk]) -> list
 
 # TODO: merge chunks that is adjecent before building the context
 
-def build_context(chunks: list[ScoredChunk], *, max_chars: int | None = None) -> str:
+def build_context(
+    chunks: list[ScoredChunk],
+    *,
+    max_tokens: int | None = None,
+) -> str:
     """Concatenate chunk contents into a single context string.
 
     Chunks are ordered by score (descending), deduplicated by content,
-    and included whole until max_chars would be exceeded.
+    and included whole until max_tokens would be exceeded.
     """
     sorted_chunks = sorted(chunks, key=lambda sc: sc.score, reverse=True)
     seen_content: set[str] = set()
     parts: list[str] = []
-    total_chars = 0
+    total_tokens = 0
 
     for scored in sorted_chunks:
         content = scored.chunk.content
@@ -71,12 +76,14 @@ def build_context(chunks: list[ScoredChunk], *, max_chars: int | None = None) ->
             f"[source: {scored.chunk.document_id}#{scored.chunk.chunk_index}]\n"
             f"{content}"
         )
-        separator_len = 2 if parts else 0  # "\n\n" between blocks
-        if max_chars is not None and total_chars + separator_len + len(block) > max_chars:
+        separator = "\n\n" if parts else ""
+        block_tokens = _token_length(separator + block) if max_tokens is not None else 0
+
+        if max_tokens is not None and total_tokens + block_tokens > max_tokens:
             break
 
         parts.append(block)
-        total_chars += separator_len + len(block)
+        total_tokens += block_tokens
 
     return "\n\n".join(parts)
 
@@ -105,10 +112,11 @@ def answer_with_retrieval(
     completion_client,
     *,
     completion_model: str,
+    max_tokens_context: int | None = None,
 ) -> RagResponse:
     """Build the final response returned by app.rag.retrieval.retrieve()."""
     # TODO: only return answer do not return chunks
-    context = build_context(chunks)
+    context = build_context(chunks, max_tokens=max_tokens_context)
     answer = generate_answer(
         query,
         context,

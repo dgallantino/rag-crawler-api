@@ -356,19 +356,27 @@ def test_answer_service_generates_answer(monkeypatch):
     chunk.id = "chunk-1"
     candidates = [RetrievedChunk(chunk=chunk, similarity_score=0.9)]
     expected = RagResponse(answer="Generated answer", sources=[])
+    captured: dict = {}
 
     monkeypatch.setattr(
         "app.services.rag.create_openai_client",
         lambda settings: MagicMock(),
     )
-    monkeypatch.setattr(
-        "app.services.rag.answer_with_retrieval",
-        lambda query, chunks, client, *, completion_model: expected,
+
+    def mock_answer(query, chunks, client, *, completion_model, max_tokens_context=None):
+        captured["max_tokens_context"] = max_tokens_context
+        return expected
+
+    monkeypatch.setattr("app.services.rag.answer_with_retrieval", mock_answer)
+
+    result = answer_service(
+        query="What is the SLA?",
+        candidates=candidates,
+        max_tokens_context=128,
     )
 
-    result = answer_service(query="What is the SLA?", candidates=candidates)
-
     assert result == expected
+    assert captured["max_tokens_context"] == 128
 
 
 def test_retrieval_service_does_not_call_rerank_by_default(
