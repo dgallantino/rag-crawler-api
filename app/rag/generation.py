@@ -6,7 +6,10 @@ final RagResponse returned up through app.rag.retrieval.retrieve().
 """
 
 from __future__ import annotations
+
+from collections import defaultdict
 from dataclasses import dataclass
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -32,11 +35,45 @@ class RagResponse(BaseModel):
     answer: str
     sources: list[Source]
 
+
 @dataclass
 class ScoredChunk:
     """A RetrievedChunk or RerankedChunk that has been normalized."""
+
     chunk: DocumentChunk
     score: float
+
+
+@dataclass
+class MergedChunk:
+    """One or more adjacent ScoredChunks from the same document."""
+
+    members: list[ScoredChunk]
+    score: float
+
+    @property
+    def document_id(self) -> UUID:
+        return self.members[0].chunk.document_id
+
+    @property
+    def collection_id(self) -> UUID:
+        return self.members[0].chunk.collection_id
+
+    @property
+    def chunk_indices(self) -> list[int]:
+        return [m.chunk.chunk_index for m in self.members]
+
+    @property
+    def content(self) -> str:
+        return "\n\n".join(m.chunk.content for m in self.members)
+
+    def source_label(self) -> str:
+        indices = self.chunk_indices
+        if len(indices) == 1:
+            return f"{self.document_id}#{indices[0]}"
+        joined = ",".join(str(i) for i in indices)
+        return f"{self.document_id}#[{joined}]"
+
 
 def normalize_chunks(chunks: list[RetrievedChunk] | list[RerankedChunk]) -> list[ScoredChunk]:
     """Normalize chunks by extracting the chunk and score."""
@@ -49,7 +86,38 @@ def normalize_chunks(chunks: list[RetrievedChunk] | list[RerankedChunk]) -> list
         if chunk.chunk is not None
     ]
 
-# TODO: merge chunks that is adjecent before building the context
+
+def merge_adjacent_chunks(chunks: list[ScoredChunk]) -> list[MergedChunk]:
+    """Merge consecutive chunks that share collection_id and document_id.
+
+    Adjacent means chunk_index differs by exactly 1. Each merged group is
+    scored as the max of its members; groups are returned highest-score first.
+    """
+    if not chunks:
+        return []
+
+    by_doc: dict[tuple[UUID, UUID], list[ScoredChunk]] = defaultdict(list)
+    for scored in chunks:
+        key = (scored.chunk.collection_id, scored.chunk.document_id)
+        by_doc[key].append(scored)
+
+    merged: list[MergedChunk] = []
+    for group in by_doc.values():
+        group.sort(key=lambda sc: sc.chunk.chunk_index)
+        run = [group[0]]
+        for scored in group[1:]:
+            if scored.chunk.chunk_index == run[-1].chunk.chunk_index + 1:
+                run.append(scored)
+            else:
+                merged.append(
+                    MergedChunk(members=run, score=max(m.score for m in run))
+                )
+                run = [scored]
+        merged.append(MergedChunk(members=run, score=max(m.score for m in run)))
+
+    merged.sort(key=lambda m: m.score, reverse=True)
+    return merged
+
 
 def build_context(
     chunks: list[ScoredChunk],
@@ -58,24 +126,22 @@ def build_context(
 ) -> str:
     """Concatenate chunk contents into a single context string.
 
-    Chunks are ordered by score (descending), deduplicated by content,
-    and included whole until max_tokens would be exceeded.
+    Adjacent same-document chunks are merged first, then groups are ordered
+    by max score (descending), deduplicated by content, and included whole
+    until max_tokens would be exceeded.
     """
-    sorted_chunks = sorted(chunks, key=lambda sc: sc.score, reverse=True)
+    merged_chunks = merge_adjacent_chunks(chunks)
     seen_content: set[str] = set()
     parts: list[str] = []
     total_tokens = 0
 
-    for scored in sorted_chunks:
-        content = scored.chunk.content
+    for merged in merged_chunks:
+        content = merged.content
         if content in seen_content:
             continue
         seen_content.add(content)
 
-        block = (
-            f"[source: {scored.chunk.document_id}#{scored.chunk.chunk_index}]\n"
-            f"{content}"
-        )
+        block = f"[source: {merged.source_label()}]\n{content}"
         separator = "\n\n" if parts else ""
         block_tokens = _token_length(separator + block) if max_tokens is not None else 0
 

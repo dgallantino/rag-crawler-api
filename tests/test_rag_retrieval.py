@@ -19,6 +19,7 @@ from app.rag.generation import (
     answer_with_retrieval,
     build_context,
     generate_answer,
+    merge_adjacent_chunks,
     normalize_chunks,
 )
 from app.rag.retrieval import (
@@ -520,16 +521,189 @@ def test_normalize_chunks_from_retrieved(db_session, test_collection):
     assert normalized[0].score == 0.75
 
 
-def test_build_context_orders_by_score_and_tags():
-    low = MagicMock()
-    low.document_id = uuid4()
-    low.chunk_index = 1
-    low.content = "less relevant"
+def _mock_chunk(
+    *,
+    content: str,
+    chunk_index: int = 0,
+    document_id=None,
+    collection_id=None,
+):
+    chunk = MagicMock()
+    chunk.document_id = document_id if document_id is not None else uuid4()
+    chunk.collection_id = collection_id if collection_id is not None else uuid4()
+    chunk.chunk_index = chunk_index
+    chunk.content = content
+    return chunk
 
-    high = MagicMock()
-    high.document_id = uuid4()
-    high.chunk_index = 0
-    high.content = "most relevant"
+
+def test_merge_adjacent_chunks_consecutive_same_doc():
+    collection_id = uuid4()
+    document_id = uuid4()
+    chunks = [
+        _scored(
+            _mock_chunk(
+                content="a",
+                chunk_index=1,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.4,
+        ),
+        _scored(
+            _mock_chunk(
+                content="c",
+                chunk_index=3,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.95,
+        ),
+        _scored(
+            _mock_chunk(
+                content="b",
+                chunk_index=2,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.5,
+        ),
+    ]
+
+    merged = merge_adjacent_chunks(chunks)
+
+    assert len(merged) == 1
+    assert merged[0].chunk_indices == [1, 2, 3]
+    assert merged[0].score == 0.95
+    assert merged[0].content == "a\n\nb\n\nc"
+
+
+def test_merge_adjacent_chunks_gap_keeps_separate():
+    collection_id = uuid4()
+    document_id = uuid4()
+    chunks = [
+        _scored(
+            _mock_chunk(
+                content="one",
+                chunk_index=1,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.5,
+        ),
+        _scored(
+            _mock_chunk(
+                content="three",
+                chunk_index=3,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.9,
+        ),
+    ]
+
+    merged = merge_adjacent_chunks(chunks)
+
+    assert len(merged) == 2
+    assert merged[0].chunk_indices == [3]
+    assert merged[1].chunk_indices == [1]
+
+
+def test_merge_adjacent_chunks_different_doc_or_collection():
+    collection_id = uuid4()
+    doc_a = uuid4()
+    doc_b = uuid4()
+    other_collection = uuid4()
+    chunks = [
+        _scored(
+            _mock_chunk(
+                content="a0",
+                chunk_index=0,
+                document_id=doc_a,
+                collection_id=collection_id,
+            ),
+            0.5,
+        ),
+        _scored(
+            _mock_chunk(
+                content="b1",
+                chunk_index=1,
+                document_id=doc_b,
+                collection_id=collection_id,
+            ),
+            0.6,
+        ),
+        _scored(
+            _mock_chunk(
+                content="a1-other-coll",
+                chunk_index=1,
+                document_id=doc_a,
+                collection_id=other_collection,
+            ),
+            0.7,
+        ),
+    ]
+
+    merged = merge_adjacent_chunks(chunks)
+
+    assert len(merged) == 3
+    assert all(len(m.chunk_indices) == 1 for m in merged)
+
+
+def test_merge_adjacent_chunks_orders_by_max_member_score():
+    collection_id = uuid4()
+    doc_a = uuid4()
+    doc_b = uuid4()
+    chunks = [
+        _scored(
+            _mock_chunk(
+                content="a1",
+                chunk_index=1,
+                document_id=doc_a,
+                collection_id=collection_id,
+            ),
+            0.4,
+        ),
+        _scored(
+            _mock_chunk(
+                content="a2",
+                chunk_index=2,
+                document_id=doc_a,
+                collection_id=collection_id,
+            ),
+            0.5,
+        ),
+        _scored(
+            _mock_chunk(
+                content="a3",
+                chunk_index=3,
+                document_id=doc_a,
+                collection_id=collection_id,
+            ),
+            0.95,
+        ),
+        _scored(
+            _mock_chunk(
+                content="b0",
+                chunk_index=0,
+                document_id=doc_b,
+                collection_id=collection_id,
+            ),
+            0.8,
+        ),
+    ]
+
+    merged = merge_adjacent_chunks(chunks)
+
+    assert len(merged) == 2
+    assert merged[0].chunk_indices == [1, 2, 3]
+    assert merged[0].score == 0.95
+    assert merged[1].chunk_indices == [0]
+    assert merged[1].score == 0.8
+
+
+def test_build_context_orders_by_score_and_tags():
+    low = _mock_chunk(content="less relevant", chunk_index=1)
+    high = _mock_chunk(content="most relevant", chunk_index=0)
 
     context = build_context([_scored(low, 0.3), _scored(high, 0.9)])
 
@@ -537,11 +711,38 @@ def test_build_context_orders_by_score_and_tags():
     assert f"[source: {high.document_id}#0]" in context
 
 
+def test_build_context_merges_adjacent_and_tags_range():
+    collection_id = uuid4()
+    document_id = uuid4()
+    chunks = [
+        _scored(
+            _mock_chunk(
+                content="part-1",
+                chunk_index=1,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.4,
+        ),
+        _scored(
+            _mock_chunk(
+                content="part-2",
+                chunk_index=2,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.9,
+        ),
+    ]
+
+    context = build_context(chunks)
+
+    assert f"[source: {document_id}#[1,2]]" in context
+    assert context.index("part-1") < context.index("part-2")
+
+
 def test_build_context_deduplicates_content():
-    chunk = MagicMock()
-    chunk.document_id = uuid4()
-    chunk.chunk_index = 0
-    chunk.content = "duplicate text"
+    chunk = _mock_chunk(content="duplicate text", chunk_index=0)
 
     context = build_context([_scored(chunk, 0.9), _scored(chunk, 0.5)])
     assert context.count("duplicate text") == 1
@@ -554,10 +755,7 @@ def test_build_context_respects_max_tokens(monkeypatch):
     )
     chunks = []
     for i in range(5):
-        c = MagicMock()
-        c.document_id = uuid4()
-        c.chunk_index = i
-        c.content = f"block-{i}"
+        c = _mock_chunk(content=f"block-{i}", chunk_index=i)
         chunks.append(_scored(c, 1.0 - i * 0.1))
 
     # First block alone is ~"[source: uuid#0]\nblock-0" (~50 chars); budget fits one.
