@@ -163,6 +163,7 @@ def create_markdown_processor(settings: Settings) -> MarkdownProcessor:
         create_openai_client(settings),
         settings.embedding_model,
         chunk_max_tokens=settings.chunk_max_tokens,
+        chunk_min_tokens=settings.chunk_min_tokens,
         chunk_overlap_percent=settings.chunk_overlap_percent,
     )
 

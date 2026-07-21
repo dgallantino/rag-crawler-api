@@ -149,6 +149,33 @@ class DocumentProcessor(ABC):
             raise
 
 
+def _merge_undersized_chunks(
+    chunks: list[str],
+    *,
+    chunk_min_tokens: int,
+    chunk_max_tokens: int,
+) -> list[str]:
+    """Merge consecutive undersized chunks up to chunk_max_tokens.
+
+    Leaves a short final (or leftover) chunk when merging would exceed max.
+    """
+    if not chunks:
+        return []
+
+    merged: list[str] = [chunks[0]]
+    for chunk in chunks[1:]:
+        if _token_length(chunk) >= chunk_min_tokens:
+            merged.append(chunk)
+            continue
+
+        combined = merged[-1] + "\n\n" + chunk
+        if _token_length(combined) <= chunk_max_tokens:
+            merged[-1] = combined
+        else:
+            merged.append(chunk)
+    return merged
+
+
 class MarkdownProcessor(DocumentProcessor):
     def __init__(
         self,
@@ -156,10 +183,12 @@ class MarkdownProcessor(DocumentProcessor):
         model: str,
         *,
         chunk_max_tokens: int,
+        chunk_min_tokens: int,
         chunk_overlap_percent: float,
     ) -> None:
         super().__init__(client, model)
         self._chunk_max_tokens = chunk_max_tokens
+        self._chunk_min_tokens = chunk_min_tokens
         self._chunk_overlap_percent = chunk_overlap_percent
 
     def chunk(self, content: str) -> list[ChunkResult]:
@@ -174,15 +203,23 @@ class MarkdownProcessor(DocumentProcessor):
 
         tags = _extract_frontmatter_tags(content)
         headings = _build_heading_index(content)
-        chunks = splitter.split_text(content)
+        chunks = _merge_undersized_chunks(
+            splitter.split_text(content),
+            chunk_min_tokens=self._chunk_min_tokens,
+            chunk_max_tokens=self._chunk_max_tokens,
+        )
 
         results: list[ChunkResult] = []
         search_from = 0
         for chunk in chunks:
             position = content.find(chunk, search_from)
             if position == -1:
-                position = search_from
-            search_from = position + len(chunk)
+                # Merged chunks join with "\n\n"; fall back to first segment.
+                first_segment = chunk.split("\n\n", 1)[0]
+                position = content.find(first_segment, search_from)
+                if position == -1:
+                    position = search_from
+            search_from = position + len(chunk.split("\n\n", 1)[0])
 
             metadata: dict = {}
             section_header = _nearest_heading(position, headings)
