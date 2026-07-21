@@ -41,7 +41,7 @@ Documents are processed by `MarkdownProcessor` (`app/rag/processor.py`), the onl
 |---------|---------|-------|
 | `CHUNK_MAX_TOKENS` | 500 | Maximum chunk size |
 | `CHUNK_OVERLAP_PERCENT` | 10 | Overlap = 50 tokens at default settings |
-| `CHUNK_MIN_TOKENS` | 300 | Configured but not enforced |
+| `CHUNK_MIN_TOKENS` | 300 | Undersized consecutive chunks are merged up to max |
 
 **Splitter:** LangChain `RecursiveCharacterTextSplitter` with tiktoken `cl100k_base` token counting.
 
@@ -144,7 +144,7 @@ Defined in `app/schemas/query.py` as `Filters`:
 |--------|----------|
 | `metadata` | Exact JSONB containment per key: `chunk_metadata @> {key: value}` |
 | `date_range` | Filters `DocumentChunk.created_at` (`after` / `before`) |
-| `owner_ref` | Defined but not enforced — silently skipped |
+| `owner_ref` | Schema field only — tenancy is enforced by resolving collections in `retrieval_service` via `get_collection_by_slug` |
 
 CLI usage: `--filters '{"metadata": {"tags": ["api"]}}'`
 
@@ -170,7 +170,7 @@ Answer generation sources (`Source` in `app/rag/generation.py`): `chunk_id`, `do
 1. Normalize chunks — prefer `rerank_score`, else `similarity_score`
 2. Sort by score descending, deduplicate by content
 3. Format each block as `[source: {document_id}#{chunk_index}]\n{content}`
-4. Join with `\n\n`; optional `max_chars` cap (not wired from API/CLI yet)
+4. Join with `\n\n`; optional `max_tokens` cap (`--max-tokens-context` on CLI `query`)
 
 **Generation:** chat completion with a system prompt requiring answers from context only; admit when context is insufficient.
 
@@ -198,15 +198,14 @@ SystemUser → Collection → Document → DocumentChunk
 | `RERANK_MODEL` | `cohere/rerank-v3.5` | Reranking model |
 | `CHUNK_MAX_TOKENS` | 500 | Max chunk size in tokens |
 | `CHUNK_OVERLAP_PERCENT` | 10 | Overlap as percentage of max |
-| `CHUNK_MIN_TOKENS` | 300 | Not enforced yet |
+| `CHUNK_MIN_TOKENS` | 300 | Merge undersized consecutive chunks (capped by max) |
 
 ## Known Limitations
 
 - No vector index (HNSW/IVFFlat) — full table scan
 - No hybrid / BM25 search
-- `owner_ref` filter not enforced (tenant scoping relies on collection)
-- `max_tokens_context` on `BackendQueryRequest` not passed to `build_context()`
-- `CHUNK_MIN_TOKENS` configured but unused
+- `owner_ref` filter is unused (tenant scoping via `get_collection_by_slug` in `retrieval_service`)
+- HTTP `/v1/query` still stubbed — `max_tokens_context` is wired through services/CLI only
 - Markdown path embeds raw text without title/heading prefix
 - No adjacent-chunk merge before context building
 - No embedding or answer caching (Redis used for job status only)

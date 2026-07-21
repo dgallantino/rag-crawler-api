@@ -6,11 +6,15 @@ final RagResponse returned up through app.rag.retrieval.retrieve().
 """
 
 from __future__ import annotations
+
+from collections import defaultdict
 from dataclasses import dataclass
+from uuid import UUID
 
 from pydantic import BaseModel
 
 from app.models import DocumentChunk
+from app.rag.processor import _token_length
 from app.rag.rerank import RerankedChunk
 from app.rag.retrieval import RetrievedChunk
 
@@ -31,11 +35,65 @@ class RagResponse(BaseModel):
     answer: str
     sources: list[Source]
 
+
 @dataclass
 class ScoredChunk:
     """A RetrievedChunk or RerankedChunk that has been normalized."""
+
     chunk: DocumentChunk
     score: float
+
+
+def _strip_leading_overlap(previous: str, current: str) -> str:
+    """Return current with the longest prefix that equals a suffix of previous removed."""
+    max_len = min(len(previous), len(current))
+    for size in range(max_len, 0, -1):
+        if previous.endswith(current[:size]):
+            return current[size:]
+    return current
+
+
+@dataclass
+class MergedChunk:
+    """One or more adjacent ScoredChunks from the same document."""
+
+    members: list[ScoredChunk]
+    score: float
+
+    @property
+    def document_id(self) -> UUID:
+        return self.members[0].chunk.document_id
+
+    @property
+    def collection_id(self) -> UUID:
+        return self.members[0].chunk.collection_id
+
+    @property
+    def chunk_indices(self) -> list[int]:
+        return [m.chunk.chunk_index for m in self.members]
+
+    @property
+    def content(self) -> str:
+        first = self.members[0].chunk.content
+        if len(self.members) == 1:
+            return first
+
+        parts = [first]
+        previous = first
+        for scored in self.members[1:]:
+            remainder = _strip_leading_overlap(previous, scored.chunk.content)
+            previous = scored.chunk.content
+            if remainder:
+                parts.append(remainder)
+        return "\n\n".join(parts)
+
+    def source_label(self) -> str:
+        indices = self.chunk_indices
+        if len(indices) == 1:
+            return f"{self.document_id}#{indices[0]}"
+        joined = ",".join(str(i) for i in indices)
+        return f"{self.document_id}#[{joined}]"
+
 
 def normalize_chunks(chunks: list[RetrievedChunk] | list[RerankedChunk]) -> list[ScoredChunk]:
     """Normalize chunks by extracting the chunk and score."""
@@ -48,35 +106,70 @@ def normalize_chunks(chunks: list[RetrievedChunk] | list[RerankedChunk]) -> list
         if chunk.chunk is not None
     ]
 
-# TODO: merge chunks that is adjecent before building the context
 
-def build_context(chunks: list[ScoredChunk], *, max_chars: int | None = None) -> str:
+def merge_adjacent_chunks(chunks: list[ScoredChunk]) -> list[MergedChunk]:
+    """Merge consecutive chunks that share collection_id and document_id.
+
+    Adjacent means chunk_index differs by exactly 1. Each merged group is
+    scored as the max of its members; groups are returned highest-score first.
+    """
+    if not chunks:
+        return []
+
+    by_doc: dict[tuple[UUID, UUID], list[ScoredChunk]] = defaultdict(list)
+    for scored in chunks:
+        key = (scored.chunk.collection_id, scored.chunk.document_id)
+        by_doc[key].append(scored)
+
+    merged: list[MergedChunk] = []
+    for group in by_doc.values():
+        group.sort(key=lambda sc: sc.chunk.chunk_index)
+        run = [group[0]]
+        for scored in group[1:]:
+            if scored.chunk.chunk_index == run[-1].chunk.chunk_index + 1:
+                run.append(scored)
+            else:
+                merged.append(
+                    MergedChunk(members=run, score=max(m.score for m in run))
+                )
+                run = [scored]
+        merged.append(MergedChunk(members=run, score=max(m.score for m in run)))
+
+    merged.sort(key=lambda m: m.score, reverse=True)
+    return merged
+
+
+def build_context(
+    chunks: list[ScoredChunk],
+    *,
+    max_tokens: int | None = None,
+) -> str:
     """Concatenate chunk contents into a single context string.
 
-    Chunks are ordered by score (descending), deduplicated by content,
-    and included whole until max_chars would be exceeded.
+    Adjacent same-document chunks are merged first, then groups are ordered
+    by max score (descending), deduplicated by content, and included whole
+    until max_tokens would be exceeded.
     """
-    sorted_chunks = sorted(chunks, key=lambda sc: sc.score, reverse=True)
+    merged_chunks = merge_adjacent_chunks(chunks)
     seen_content: set[str] = set()
     parts: list[str] = []
-    total_chars = 0
+    total_tokens = 0
 
-    for scored in sorted_chunks:
-        content = scored.chunk.content
+    for merged in merged_chunks:
+        content = merged.content
         if content in seen_content:
             continue
         seen_content.add(content)
 
-        block = (
-            f"[source: {scored.chunk.document_id}#{scored.chunk.chunk_index}]\n"
-            f"{content}"
-        )
-        separator_len = 2 if parts else 0  # "\n\n" between blocks
-        if max_chars is not None and total_chars + separator_len + len(block) > max_chars:
+        block = f"[source: {merged.source_label()}]\n{content}"
+        separator = "\n\n" if parts else ""
+        block_tokens = _token_length(separator + block) if max_tokens is not None else 0
+
+        if max_tokens is not None and total_tokens + block_tokens > max_tokens:
             break
 
         parts.append(block)
-        total_chars += separator_len + len(block)
+        total_tokens += block_tokens
 
     return "\n\n".join(parts)
 
@@ -105,10 +198,11 @@ def answer_with_retrieval(
     completion_client,
     *,
     completion_model: str,
+    max_tokens_context: int | None = None,
 ) -> RagResponse:
     """Build the final response returned by app.rag.retrieval.retrieve()."""
     # TODO: only return answer do not return chunks
-    context = build_context(chunks)
+    context = build_context(chunks, max_tokens=max_tokens_context)
     answer = generate_answer(
         query,
         context,

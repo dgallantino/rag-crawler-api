@@ -211,8 +211,11 @@ def test_create_rerank_fn_returns_empty_for_no_chunks() -> None:
     assert rerank("query", 3, []) == []
 
 
-def test_retrieval_service_retrieves_chunks(db_session, test_collection, monkeypatch):
+def test_retrieval_service_retrieves_chunks(
+    db_session, test_user, test_collection, monkeypatch
+):
     _mock_rag_settings(monkeypatch)
+    user, _ = test_user
     chunk = MagicMock()
     chunk.id = "chunk-1"
     retrieved = [RetrievedChunk(chunk=chunk, similarity_score=0.9)]
@@ -241,7 +244,8 @@ def test_retrieval_service_retrieves_chunks(db_session, test_collection, monkeyp
         query="What is the SLA?",
         top_k=3,
         filters={"metadata": {"doc_type": "contract"}},
-        collection=str(test_collection.id),
+        user=user,
+        collection_slug="test-collection",
         session=db_session,
     )
 
@@ -251,10 +255,99 @@ def test_retrieval_service_retrieves_chunks(db_session, test_collection, monkeyp
             "query": "What is the SLA?",
             "top_k": 3,
             "filters": {"metadata": {"doc_type": "contract"}},
-            "collection": str(test_collection.id),
+            "collection": [str(test_collection.id)],
             "session": db_session,
         }
     ]
+
+
+def test_retrieval_service_rejects_other_users_collection_slug(
+    db_session, test_user, monkeypatch
+):
+    from app.services.collections import CollectionNotFoundError, create_collection
+    from app.services.system_user import create_system_user
+
+    _mock_rag_settings(monkeypatch)
+    user, _ = test_user
+    other_user, _ = create_system_user(db_session, name="Other Tenant")
+    create_collection(db_session, other_user, name="Other Docs", slug="other-docs")
+
+    monkeypatch.setattr(
+        "app.services.rag.create_embed_fn",
+        lambda settings: lambda text: [0.0] * 1536,
+    )
+
+    with pytest.raises(CollectionNotFoundError):
+        retrieval_service(
+            query="q",
+            top_k=1,
+            filters=None,
+            user=user,
+            collection_slug="other-docs",
+            session=db_session,
+        )
+
+
+def test_retrieval_service_slug_none_passes_all_user_collections(
+    db_session, test_user, test_collection, monkeypatch
+):
+    from app.services.collections import create_collection
+
+    _mock_rag_settings(monkeypatch)
+    user, _ = test_user
+    other = create_collection(
+        db_session, user, name="Other Collection", slug="other-collection"
+    )
+    retrieve_calls: list[dict] = []
+
+    def mock_retrieve(query, top_k, filters, collection, *, session, embed_fn):
+        retrieve_calls.append({"collection": collection})
+        return []
+
+    monkeypatch.setattr("app.services.rag.retrieve", mock_retrieve)
+    monkeypatch.setattr(
+        "app.services.rag.create_embed_fn",
+        lambda settings: lambda text: [0.0] * 1536,
+    )
+
+    retrieval_service(
+        query="q",
+        top_k=1,
+        filters=None,
+        user=user,
+        collection_slug=None,
+        session=db_session,
+    )
+
+    assert len(retrieve_calls) == 1
+    assert set(retrieve_calls[0]["collection"]) == {
+        str(test_collection.id),
+        str(other.id),
+    }
+
+
+def test_retrieval_service_slug_none_raises_when_user_has_no_collections(
+    db_session, monkeypatch
+):
+    from app.services.collections import CollectionNotFoundError
+    from app.services.system_user import create_system_user
+
+    _mock_rag_settings(monkeypatch)
+    user, _ = create_system_user(db_session, name="Empty Tenant")
+    monkeypatch.setattr(
+        "app.services.rag.create_embed_fn",
+        lambda settings: lambda text: [0.0] * 1536,
+    )
+
+    with pytest.raises(CollectionNotFoundError):
+        retrieval_service(
+            query="q",
+            top_k=1,
+            filters=None,
+            user=user,
+            collection_slug=None,
+            session=db_session,
+        )
 
 
 def test_answer_service_generates_answer(monkeypatch):
@@ -263,23 +356,34 @@ def test_answer_service_generates_answer(monkeypatch):
     chunk.id = "chunk-1"
     candidates = [RetrievedChunk(chunk=chunk, similarity_score=0.9)]
     expected = RagResponse(answer="Generated answer", sources=[])
+    captured: dict = {}
 
     monkeypatch.setattr(
         "app.services.rag.create_openai_client",
         lambda settings: MagicMock(),
     )
-    monkeypatch.setattr(
-        "app.services.rag.answer_with_retrieval",
-        lambda query, chunks, client, *, completion_model: expected,
+
+    def mock_answer(query, chunks, client, *, completion_model, max_tokens_context=None):
+        captured["max_tokens_context"] = max_tokens_context
+        return expected
+
+    monkeypatch.setattr("app.services.rag.answer_with_retrieval", mock_answer)
+
+    result = answer_service(
+        query="What is the SLA?",
+        candidates=candidates,
+        max_tokens_context=128,
     )
 
-    result = answer_service(query="What is the SLA?", candidates=candidates)
-
     assert result == expected
+    assert captured["max_tokens_context"] == 128
 
 
-def test_retrieval_service_does_not_call_rerank_by_default(db_session, monkeypatch):
+def test_retrieval_service_does_not_call_rerank_by_default(
+    db_session, test_user, test_collection, monkeypatch
+):
     _mock_rag_settings(monkeypatch)
+    user, _ = test_user
     rerank_called = False
 
     def mock_rerank(*args, **kwargs):
@@ -298,7 +402,8 @@ def test_retrieval_service_does_not_call_rerank_by_default(db_session, monkeypat
         query="q",
         top_k=1,
         filters=None,
-        collection=None,
+        user=user,
+        collection_slug=None,
         session=db_session,
     )
 

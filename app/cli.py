@@ -155,7 +155,7 @@ def cmd_upload_document(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
         user = get_system_user_by_name(db, args.name)
-        collection = get_collection_by_slug(db, user, args.collection_slug)
+        collection = get_collection_by_slug(db, user, args.collection_slug)[0]
         document = create_document_upload(
             db,
             collection,
@@ -229,6 +229,16 @@ def _add_rag_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_query_args(parser: argparse.ArgumentParser) -> None:
+    _add_rag_args(parser)
+    parser.add_argument(
+        "--max-tokens-context",
+        type=int,
+        default=None,
+        help="Optional cap on total tokens included in the LLM context",
+    )
+
+
 def cmd_retrieve(args: argparse.Namespace) -> int:
     db = SessionLocal()
     try:
@@ -239,21 +249,13 @@ def cmd_retrieve(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-        collection_id: str | None = None
-        if args.collection_slug is not None:
-            try:
-                collection = get_collection_by_slug(db, user, args.collection_slug)
-            except CollectionNotFoundError as exc:
-                print(f"error: collection not found: {exc}", file=sys.stderr)
-                return 1
-            collection_id = str(collection.id)
-
         start = time.monotonic()
         candidates = retrieval_service(
             query=args.query,
             top_k=args.top_k,
             filters=filters,
-            collection=collection_id,
+            user=user,
+            collection_slug=args.collection_slug,
             use_rerank=args.rerank,
             session=db,
         )
@@ -268,6 +270,9 @@ def cmd_retrieve(args: argparse.Namespace) -> int:
         )
     except SystemUserLookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except CollectionNotFoundError as exc:
+        print(f"error: collection not found: {exc}", file=sys.stderr)
         return 1
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -303,26 +308,25 @@ def cmd_query(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-        collection_id: str | None = None
-        if args.collection_slug is not None:
-            try:
-                collection = get_collection_by_slug(db, user, args.collection_slug)
-            except CollectionNotFoundError as exc:
-                print(f"error: collection not found: {exc}", file=sys.stderr)
-                return 1
-            collection_id = str(collection.id)
-
         candidates = retrieval_service(
             query=args.query,
             top_k=args.top_k,
             filters=filters,
-            collection=collection_id,
+            user=user,
+            collection_slug=args.collection_slug,
             use_rerank=args.rerank,
             session=db,
         )
-        response = answer_service(args.query, candidates)
+        response = answer_service(
+            args.query,
+            candidates,
+            max_tokens_context=args.max_tokens_context,
+        )
     except SystemUserLookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except CollectionNotFoundError as exc:
+        print(f"error: collection not found: {exc}", file=sys.stderr)
         return 1
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -440,7 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     query_parser = subparsers.add_parser(
         "query", help="Retrieve relevant chunks and generate a grounded answer"
     )
-    _add_rag_args(query_parser)
+    _add_query_args(query_parser)
     query_parser.set_defaults(func=cmd_query)
 
     db_parser = subparsers.add_parser(

@@ -15,6 +15,7 @@ def _make_processor() -> MarkdownProcessor:
         Mock(),
         "test-model",
         chunk_max_tokens=500,
+        chunk_min_tokens=300,
         chunk_overlap_percent=10,
     )
 

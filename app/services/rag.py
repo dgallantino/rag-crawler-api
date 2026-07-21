@@ -4,11 +4,13 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
+from app.models import SystemUser
 from app.rag.generation import RagResponse, answer_with_retrieval, normalize_chunks
 from app.rag.rerank import RerankServiceFn, RerankedChunk, rerank
 from app.rag.processor import MarkdownProcessor
 from app.rag.retrieval import EmbedFn, RetrievedChunk, retrieve
 from app.schemas.query import ChunkSource, RetrievalChunk, RetrievalResult
+from app.services.collections import get_collection_by_slug
 
 from openai import OpenAI
 
@@ -18,19 +20,33 @@ def retrieval_service(
     query: str,
     top_k: int,
     filters: dict | None,
-    collection: str | None,
     *,
+    user: SystemUser,
+    collection_slug: str | None = None,
     use_rerank: bool = False,
     session: Session,
 ) -> list[RetrievedChunk] | list[RerankedChunk]:
-    """Retrieve and optionally rerank relevant chunks for a query."""
+    """Retrieve and optionally rerank relevant chunks for a query.
+
+    Resolves collections via ``get_collection_by_slug`` (raises
+    ``CollectionNotFoundError`` when none match). Tenant scoping is entirely
+    in that lookup — ``retrieve`` only receives collection UUID(s).
+    """
     settings = get_settings()
     embed_fn = create_embed_fn(settings)
 
+    collections = get_collection_by_slug(session, user, collection_slug)
+    collection_ids = [str(c.id) for c in collections]
+
     initial_retrieve_k = top_k if not use_rerank else top_k * 4
     candidates = retrieve(
-        query, initial_retrieve_k, filters, collection,
-        session=session, embed_fn=embed_fn)
+        query,
+        initial_retrieve_k,
+        filters,
+        collection_ids,
+        session=session,
+        embed_fn=embed_fn,
+    )
 
     if use_rerank:
         return rerank(query, candidates, top_k, rerank_service_fn=create_rerank_fn(settings))
@@ -77,6 +93,8 @@ def chunks_to_retrieval_result(
 def answer_service(
     query: str,
     candidates: list[RetrievedChunk] | list[RerankedChunk],
+    *,
+    max_tokens_context: int | None = None,
 ) -> RagResponse:
     """Turn retrieved chunks into context and generate a grounded answer."""
     settings = get_settings()
@@ -86,6 +104,7 @@ def answer_service(
         normalize_chunks(candidates),
         completion_client,
         completion_model=settings.completion_model,
+        max_tokens_context=max_tokens_context,
     )
 
 
@@ -163,6 +182,7 @@ def create_markdown_processor(settings: Settings) -> MarkdownProcessor:
         create_openai_client(settings),
         settings.embedding_model,
         chunk_max_tokens=settings.chunk_max_tokens,
+        chunk_min_tokens=settings.chunk_min_tokens,
         chunk_overlap_percent=settings.chunk_overlap_percent,
     )
 

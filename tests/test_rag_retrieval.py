@@ -1,96 +1,29 @@
-"""Tests for RAG retrieval and generation modules.
+"""Tests for RAG retrieval module.
 
 Retrieval and filter tests run against Postgres/pgvector via testcontainers.
-Generation unit tests use mocked completion clients — no live API calls.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
-from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 
-from app.models import Document, DocumentChunk
-from app.rag.generation import (
-    ScoredChunk,
-    answer_with_retrieval,
-    build_context,
-    generate_answer,
-    normalize_chunks,
-)
+from app.models import DocumentChunk
 from app.rag.retrieval import (
-    RetrievedChunk,
     _apply_filters,
     _distance_to_score,
     embed_query,
     retrieve,
     vector_search,
 )
+from tests.rag_helpers import _make_chunk, _vec
 
 
 def fake_embed_fn(_query: str) -> list[float]:
     return [0.0] * 1536
-
-
-def fake_completion_client(answer: str = "Mock answer") -> MagicMock:
-    mock = MagicMock()
-
-    def create(*, model, messages, **kwargs):
-        return MagicMock(choices=[MagicMock(message=MagicMock(content=answer))])
-
-    mock.chat.completions.create = create
-    return mock
-
-
-def _vec(*values: float) -> list[float]:
-    vector = [0.0] * 1536
-    for index, value in enumerate(values):
-        vector[index] = value
-    return vector
-
-
-def _make_chunk(
-    db_session,
-    collection,
-    *,
-    content: str = "chunk content",
-    metadata: dict | None = None,
-    created_at: datetime | None = None,
-    chunk_vector: list[float] | None = None,
-    chunk_index: int = 0,
-) -> DocumentChunk:
-    document = Document(
-        collection_id=collection.id,
-        url=f"file://{uuid4()}.md",
-        title="test.md",
-        content=content,
-    )
-    db_session.add(document)
-    db_session.flush()
-
-    chunk = DocumentChunk(
-        document_id=document.id,
-        collection_id=collection.id,
-        chunk_index=chunk_index,
-        content=content,
-        chunk_metadata=metadata,
-        created_at=created_at or datetime(2024, 6, 15, 12, 0, 0),
-        chunk_vector=chunk_vector or ([0.1] * 1536),
-    )
-    db_session.add(chunk)
-    db_session.commit()
-    return chunk
-
-
-def _retrieved(chunk: DocumentChunk, similarity_score: float = 0.9) -> RetrievedChunk:
-    return RetrievedChunk(chunk=chunk, similarity_score=similarity_score)
-
-
-def _scored(chunk: DocumentChunk, score: float = 0.9) -> ScoredChunk:
-    return ScoredChunk(chunk=chunk, score=score)
 
 
 # --- retrieval.py: _distance_to_score ---
@@ -290,7 +223,9 @@ def test_apply_filters_empty_dict_is_noop(db_session, test_collection):
 # --- retrieval.py: vector_search ---
 
 
-def test_vector_search_maps_distance_to_similarity_score(db_session, test_collection):
+def test_vector_search_maps_distance_to_similarity_score(
+    db_session, test_collection
+):
     closer = _make_chunk(
         db_session,
         test_collection,
@@ -309,7 +244,7 @@ def test_vector_search_maps_distance_to_similarity_score(db_session, test_collec
         _vec(1.0),
         top_k=2,
         filters=None,
-        collection=None,
+        collection=[str(test_collection.id)],
     )
 
     assert len(results) == 2
@@ -333,7 +268,7 @@ def test_vector_search_respects_top_k(db_session, test_collection):
         _vec(1.0),
         top_k=2,
         filters=None,
-        collection=None,
+        collection=[str(test_collection.id)],
     )
 
     assert len(results) == 2
@@ -366,11 +301,44 @@ def test_vector_search_scopes_by_collection(
         _vec(1.0),
         top_k=5,
         filters=None,
-        collection=str(test_collection.id),
+        collection=[str(test_collection.id)],
     )
 
     assert len(results) == 1
     assert results[0].chunk.id == in_scope.id
+
+
+def test_vector_search_accepts_multiple_collections(
+    db_session, test_user, test_collection
+):
+    user, _ = test_user
+    from app.services.collections import create_collection
+
+    other_collection = create_collection(
+        db_session, user, name="Other Collection", slug="other-collection"
+    )
+    a = _make_chunk(
+        db_session,
+        test_collection,
+        content="a",
+        chunk_vector=_vec(1.0),
+    )
+    b = _make_chunk(
+        db_session,
+        other_collection,
+        content="b",
+        chunk_vector=_vec(0.9),
+    )
+
+    results = vector_search(
+        db_session,
+        _vec(1.0),
+        top_k=5,
+        filters=None,
+        collection=[str(test_collection.id), str(other_collection.id)],
+    )
+
+    assert {r.chunk.id for r in results} == {a.id, b.id}
 
 
 def test_vector_search_applies_filters(db_session, test_collection, monkeypatch):
@@ -389,7 +357,7 @@ def test_vector_search_applies_filters(db_session, test_collection, monkeypatch)
         _vec(1.0),
         top_k=5,
         filters=filters,
-        collection=None,
+        collection=[str(test_collection.id)],
     )
 
     assert apply_calls == [filters]
@@ -416,7 +384,7 @@ def test_vector_search_with_metadata_filter(db_session, test_collection):
         _vec(1.0),
         top_k=5,
         filters={"metadata": {"doc_type": "contract"}},
-        collection=str(test_collection.id),
+        collection=[str(test_collection.id)],
     )
 
     assert len(results) == 1
@@ -429,7 +397,7 @@ def test_vector_search_returns_empty_when_no_rows(db_session):
         [0.0] * 1536,
         top_k=5,
         filters=None,
-        collection=None,
+        collection=[str(uuid4())],
     )
 
     assert results == []
@@ -461,7 +429,7 @@ def test_retrieve_embeds_and_searches(db_session, test_collection):
         query="Which chunk?",
         top_k=2,
         filters=None,
-        collection=str(test_collection.id),
+        collection=[str(test_collection.id)],
         session=db_session,
         embed_fn=lambda _query: _vec(1.0),
     )
@@ -469,97 +437,3 @@ def test_retrieve_embeds_and_searches(db_session, test_collection):
     assert len(results) == 1
     assert results[0].chunk.id == chunk.id
     assert results[0].similarity_score == pytest.approx(1.0, abs=1e-4)
-
-
-# --- generation.py ---
-
-
-def test_normalize_chunks_from_retrieved(db_session, test_collection):
-    chunk = _make_chunk(db_session, test_collection, content="body")
-    retrieved = [_retrieved(chunk, 0.75)]
-
-    normalized = normalize_chunks(retrieved)
-
-    assert len(normalized) == 1
-    assert normalized[0].chunk.id == chunk.id
-    assert normalized[0].score == 0.75
-
-
-def test_build_context_orders_by_score_and_tags():
-    low = MagicMock()
-    low.document_id = uuid4()
-    low.chunk_index = 1
-    low.content = "less relevant"
-
-    high = MagicMock()
-    high.document_id = uuid4()
-    high.chunk_index = 0
-    high.content = "most relevant"
-
-    context = build_context([_scored(low, 0.3), _scored(high, 0.9)])
-
-    assert context.index("most relevant") < context.index("less relevant")
-    assert f"[source: {high.document_id}#0]" in context
-
-
-def test_build_context_deduplicates_content():
-    chunk = MagicMock()
-    chunk.document_id = uuid4()
-    chunk.chunk_index = 0
-    chunk.content = "duplicate text"
-
-    context = build_context([_scored(chunk, 0.9), _scored(chunk, 0.5)])
-    assert context.count("duplicate text") == 1
-
-
-def test_build_context_respects_max_chars():
-    chunks = []
-    for i in range(5):
-        c = MagicMock()
-        c.document_id = uuid4()
-        c.chunk_index = i
-        c.content = f"block-{i}-" + ("x" * 50)
-        chunks.append(_scored(c, 1.0 - i * 0.1))
-
-    context = build_context(chunks, max_chars=200)
-    assert len(context) <= 200
-    assert "block-0" in context
-
-
-def test_generate_answer_returns_mock_content():
-    client = fake_completion_client(answer="The SLA is 99.9%")
-    result = generate_answer(
-        "What is the SLA?",
-        "Context about SLA",
-        client,
-        completion_model="test-model",
-    )
-    assert result == "The SLA is 99.9%"
-
-
-def test_generate_answer_handles_none_content():
-    client = MagicMock()
-    client.chat.completions.create.return_value = MagicMock(
-        choices=[MagicMock(message=MagicMock(content=None))]
-    )
-    result = generate_answer("q", "ctx", client, completion_model="test-model")
-    assert result == ""
-
-
-def test_answer_with_retrieval_returns_rag_response():
-    chunk = MagicMock()
-    chunk.id = uuid4()
-    chunk.document_id = uuid4()
-    chunk.chunk_index = 0
-    chunk.content = "SLA is 99.9%"
-    scored = [_scored(chunk, 0.95)]
-    client = fake_completion_client(answer="The SLA is 99.9%")
-
-    result = answer_with_retrieval(
-        "What is the SLA?", scored, client, completion_model="test-model"
-    )
-
-    assert result.answer == "The SLA is 99.9%"
-    assert len(result.sources) == 1
-    assert result.sources[0].chunk_id == str(chunk.id)
-    assert result.sources[0].score == 0.95
