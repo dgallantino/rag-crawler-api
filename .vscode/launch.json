@@ -35,7 +35,7 @@
       "args": [
         "upload-document",
         "--path",
-        "tests/test_model_chat_full_knowledge_base.md",
+        "tests/data/test_model_chat_full_knowledge_base.md",
         "--name",
         "developer",
         "--collection-slug",
