@@ -27,11 +27,11 @@
 
 Highest-priority gaps that unblock correct, tenant-safe RAG behavior:
 
-1. **Tenant-safe retrieval** — ~~`owner_ref` in `Filters` is silently skipped~~ Done: `retrieval_service` resolves collections via `get_collection_by_slug` (all of the user's collections when slug is `None`; raises if none). `retrieve` / `vector_search` only filter by collection UUID(s). `owner_ref` remains unused as a SQL filter.
-2. **Apply `max_tokens_context` end-to-end** — ~~callers do not pass caps~~ Done: `build_context(max_tokens=...)` via tiktoken; plumbed through `answer_with_retrieval` / `answer_service` / CLI `--max-tokens-context`.
-3. **Honor `chunk_min_tokens`** — ~~unused in `MarkdownProcessor`~~ Done: consecutive undersized chunks are merged (capped by `chunk_max_tokens`).
-4. **Document / collection services vs HTTP** — service layer for upload/status/collections is ready for CLI; wire to HTTP only after Milestone C contracts. No blocking service gaps for the markdown CLI path beyond the items above.
-5. **Adjacent-chunk merge before context** — TODO in `app/rag/generation.py`; improves answer coherence (also reinforced under B).
+1. **Tenant-safe retrieval** — ~~`owner_ref` in `Filters` is silently skipped~~ ~~Done: `retrieval_service` resolves collections via `get_collection_by_slug` (all of the user's collections when slug is `None`; raises if none). `retrieve` / `vector_search` only filter by collection UUID(s). `owner_ref` remains unused as a SQL filter.~~
+2. **Apply `max_tokens_context` end-to-end** — ~~callers do not pass caps~~ ~~Done: `build_context(max_tokens=...)` via tiktoken; plumbed through `answer_with_retrieval` / `answer_service` / CLI `--max-tokens-context`.~~
+3. **Honor `chunk_min_tokens`** — ~~unused in `MarkdownProcessor`~~ ~~Done: consecutive undersized chunks are merged (capped by `chunk_max_tokens`).~~
+4. **Document / collection services vs HTTP** — ~~service layer for upload/status/collections is ready for CLI; wire to HTTP only after Milestone C contracts. No blocking service gaps for the markdown CLI path beyond the items above.~~
+5. **Adjacent-chunk merge before context** — ~~TODO in `app/rag/generation.py`; improves answer coherence (also reinforced under B).~~
 
 ---
 
