@@ -44,6 +44,15 @@ class ScoredChunk:
     score: float
 
 
+def _strip_leading_overlap(previous: str, current: str) -> str:
+    """Return current with the longest prefix that equals a suffix of previous removed."""
+    max_len = min(len(previous), len(current))
+    for size in range(max_len, 0, -1):
+        if previous.endswith(current[:size]):
+            return current[size:]
+    return current
+
+
 @dataclass
 class MergedChunk:
     """One or more adjacent ScoredChunks from the same document."""
@@ -65,7 +74,18 @@ class MergedChunk:
 
     @property
     def content(self) -> str:
-        return "\n\n".join(m.chunk.content for m in self.members)
+        first = self.members[0].chunk.content
+        if len(self.members) == 1:
+            return first
+
+        parts = [first]
+        previous = first
+        for scored in self.members[1:]:
+            remainder = _strip_leading_overlap(previous, scored.chunk.content)
+            previous = scored.chunk.content
+            if remainder:
+                parts.append(remainder)
+        return "\n\n".join(parts)
 
     def source_label(self) -> str:
         indices = self.chunk_indices

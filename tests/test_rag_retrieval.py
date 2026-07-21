@@ -15,7 +15,9 @@ from sqlalchemy import select
 
 from app.models import Document, DocumentChunk
 from app.rag.generation import (
+    MergedChunk,
     ScoredChunk,
+    _strip_leading_overlap,
     answer_with_retrieval,
     build_context,
     generate_answer,
@@ -536,6 +538,13 @@ def _mock_chunk(
     return chunk
 
 
+def test_strip_leading_overlap():
+    assert _strip_leading_overlap("hello world", "world peace") == " peace"
+    assert _strip_leading_overlap("hello world", "world") == ""
+    assert _strip_leading_overlap("abc", "xyz") == "xyz"
+    assert _strip_leading_overlap("", "abc") == "abc"
+
+
 def test_merge_adjacent_chunks_consecutive_same_doc():
     collection_id = uuid4()
     document_id = uuid4()
@@ -575,6 +584,90 @@ def test_merge_adjacent_chunks_consecutive_same_doc():
     assert merged[0].chunk_indices == [1, 2, 3]
     assert merged[0].score == 0.95
     assert merged[0].content == "a\n\nb\n\nc"
+
+
+def test_merged_chunk_content_strips_overlap():
+    collection_id = uuid4()
+    document_id = uuid4()
+    members = [
+        _scored(
+            _mock_chunk(
+                content="hello world",
+                chunk_index=0,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.9,
+        ),
+        _scored(
+            _mock_chunk(
+                content="world peace",
+                chunk_index=1,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.8,
+        ),
+    ]
+
+    merged = MergedChunk(members=members, score=0.9)
+    assert merged.content == "hello world\n\n peace"
+
+
+def test_merged_chunk_content_no_overlap():
+    collection_id = uuid4()
+    document_id = uuid4()
+    members = [
+        _scored(
+            _mock_chunk(
+                content="a",
+                chunk_index=0,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.5,
+        ),
+        _scored(
+            _mock_chunk(
+                content="b",
+                chunk_index=1,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.4,
+        ),
+    ]
+
+    merged = MergedChunk(members=members, score=0.5)
+    assert merged.content == "a\n\nb"
+
+
+def test_merged_chunk_content_full_containment_skips_empty():
+    collection_id = uuid4()
+    document_id = uuid4()
+    members = [
+        _scored(
+            _mock_chunk(
+                content="hello world",
+                chunk_index=0,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.9,
+        ),
+        _scored(
+            _mock_chunk(
+                content="world",
+                chunk_index=1,
+                document_id=document_id,
+                collection_id=collection_id,
+            ),
+            0.7,
+        ),
+    ]
+
+    merged = MergedChunk(members=members, score=0.9)
+    assert merged.content == "hello world"
 
 
 def test_merge_adjacent_chunks_gap_keeps_separate():
