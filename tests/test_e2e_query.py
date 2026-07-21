@@ -16,7 +16,7 @@ from tests.e2e_report import (
     dump_db_state,
     write_e2e_report,
 )
-from tests.test_rag_retrieval import _make_chunk
+from tests.rag_helpers import _make_chunk
 
 
 def e2e_is_configured() -> bool:
