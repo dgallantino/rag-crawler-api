@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     completion_model: str = "openai/gpt-4o-mini"
     rerank_model: str = "cohere/rerank-v3.5"
 
+    # pgvector HNSW session tuning (applied around vector_search)
+    hnsw_ef_search: int = 40
+    hnsw_iterative_scan: str = "relaxed_order"
+    hnsw_max_scan_tuples: int = 20000
+
     # E2E test report output directory
     e2e_report_dir: str = "/tmp"
 
