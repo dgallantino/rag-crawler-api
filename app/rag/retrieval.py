@@ -13,9 +13,10 @@ from datetime import date, datetime, time
 from typing import Callable
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import DocumentChunk
 
 
@@ -40,6 +41,27 @@ def embed_query(query: str, embed_fn: EmbedFn) -> list[float]:
     return embed_fn(query)
 
 
+def _apply_hnsw_session_settings(session: Session, *, top_k: int) -> None:
+    """Set LOCAL pgvector HNSW GUCs for the current transaction.
+
+    ef_search scales with top_k so rerank over-fetch (top_k * 4 from the
+    service layer) naturally requests a wider ANN candidate pool.
+
+    PostgreSQL SET does not accept bind parameters, so values are inlined
+    after validation.
+    """
+    settings = get_settings()
+    ef_search = int(max(settings.hnsw_ef_search, top_k * 2))
+    max_scan_tuples = int(settings.hnsw_max_scan_tuples)
+    iterative_scan = settings.hnsw_iterative_scan
+    if iterative_scan not in {"off", "strict_order", "relaxed_order"}:
+        raise ValueError(f"invalid hnsw_iterative_scan: {iterative_scan!r}")
+
+    session.execute(text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
+    session.execute(text(f"SET LOCAL hnsw.iterative_scan = {iterative_scan}"))
+    session.execute(text(f"SET LOCAL hnsw.max_scan_tuples = {max_scan_tuples}"))
+
+
 def vector_search(
     session: Session,
     query_vector: list[float],
@@ -53,6 +75,8 @@ def vector_search(
     ``collection`` is one or more collection UUIDs resolved by the service
     layer (tenant scoping happens there, not here).
     """
+    _apply_hnsw_session_settings(session, top_k=top_k)
+
     collection_ids = [UUID(c) for c in collection]
     stmt = (
         select(
