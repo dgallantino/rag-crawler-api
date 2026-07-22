@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +17,27 @@ from app.database import Base, get_db
 from app.main import app
 from app.services.collections import create_collection
 from app.services.system_user import create_system_user
+
+
+def _configure_podman_for_testcontainers() -> None:
+    """Point testcontainers at rootless Podman when its socket is available.
+
+    Leaves an explicit DOCKER_HOST alone. Disables Ryuk under rootless Podman
+    (required); the PostgresContainer context manager still cleans up the session.
+    """
+    if os.environ.get("DOCKER_HOST"):
+        return
+
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    podman_sock = Path(runtime_dir) / "podman" / "podman.sock"
+    if not podman_sock.exists():
+        return
+
+    os.environ["DOCKER_HOST"] = f"unix://{podman_sock}"
+    os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
+
+_configure_podman_for_testcontainers()
 
 
 @pytest.fixture(scope="session")

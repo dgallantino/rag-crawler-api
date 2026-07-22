@@ -130,13 +130,25 @@ Services: `api` (port 8000), `postgres` (5432), `redis` (6379), `celery-worker`.
 
 ## Running Tests
 
-Tests use an ephemeral PostgreSQL instance (pgvector) via [testcontainers-python](https://testcontainers-python.readthedocs.io/). **Docker must be running.**
+Tests use an ephemeral PostgreSQL instance (pgvector) via [testcontainers-python](https://testcontainers-python.readthedocs.io/). A Docker-API compatible runtime must be available (Podman or Docker).
+
+**Podman (rootless, recommended on Fedora):** start the user socket for this session, then run pytest. `tests/conftest.py` sets `DOCKER_HOST` and disables Ryuk when the Podman socket is present.
 
 ```bash
+systemctl --user start podman.socket
 source venv/bin/activate
 pip install -r requirements-test.txt
 pytest
 ```
+
+Or export the env vars yourself (needed if you skip the conftest auto-detect):
+
+```bash
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/podman/podman.sock"
+export TESTCONTAINERS_RYUK_DISABLED=true
+```
+
+**Docker:** ensure the daemon is running; leave `DOCKER_HOST` unset so the default `/var/run/docker.sock` is used.
 
 By default, live e2e tests (real OpenRouter calls) are **excluded**. To run them, ensure `OPENROUTER_API_KEY` is set in `.env`, then:
 
