@@ -69,6 +69,13 @@ class DocumentChunk(Base):
             "chunk_metadata",
             postgresql_using="gin",
         ),
+        Index(
+            "ix_document_chunks_chunk_vector_hnsw",
+            "chunk_vector",
+            postgresql_using="hnsw",
+            postgresql_ops={"chunk_vector": "vector_cosine_ops"},
+            postgresql_with={"m": 16, "ef_construction": 64},
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -82,7 +89,7 @@ class DocumentChunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     chunk_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
-    chunk_vector: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    chunk_vector: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
     collection: Mapped["Collection"] = relationship(back_populates="chunks")
