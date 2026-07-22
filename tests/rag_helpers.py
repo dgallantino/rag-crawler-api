@@ -17,8 +17,10 @@ def _vec(*values: float) -> list[float]:
     return vector
 
 
-def _random_unit_vector(rng: random.Random) -> list[float]:
-    vec = [rng.gauss(0.0, 1.0) for _ in range(1536)]
+def _random_unit_vector(rng: random.Random, *, active_dims: int = 1536) -> list[float]:
+    """Unit vector; ``active_dims`` < 1536 lowers intrinsic dimension for recall tests."""
+    active = max(1, min(active_dims, 1536))
+    vec = [rng.gauss(0.0, 1.0) for _ in range(active)] + [0.0] * (1536 - active)
     norm = math.sqrt(sum(x * x for x in vec)) or 1.0
     return [x / norm for x in vec]
 
@@ -64,6 +66,7 @@ def bulk_make_chunks(
     seed: int = 0,
     metadata: dict | None = None,
     metadata_every: int | None = None,
+    active_dims: int = 1536,
 ) -> list[DocumentChunk]:
     """Insert ``count`` synthetic chunks with random unit vectors.
 
@@ -94,7 +97,7 @@ def bulk_make_chunks(
             content=f"bulk-chunk-{index}",
             chunk_metadata=chunk_metadata,
             created_at=created_at,
-            chunk_vector=_random_unit_vector(rng),
+            chunk_vector=_random_unit_vector(rng, active_dims=active_dims),
         )
         chunks.append(chunk)
         db_session.add(chunk)

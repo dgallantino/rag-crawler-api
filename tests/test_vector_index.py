@@ -171,16 +171,31 @@ def _brute_force_ids(
     return [r.chunk.id for r in results]
 
 
+@pytest.fixture
+def high_ef_search(monkeypatch):
+    """Raise ef_search so recall tests measure ANN quality, not under-search."""
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+    monkeypatch.setattr(settings, "hnsw_ef_search", 200)
+    monkeypatch.setattr("app.rag.retrieval.get_settings", lambda: settings)
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.mark.slow
-def test_hnsw_recall_vs_brute_force(db_session, test_collection) -> None:
-    bulk_make_chunks(db_session, test_collection, 3000, seed=7)
+def test_hnsw_recall_vs_brute_force(db_session, test_collection, high_ef_search) -> None:
+    # active_dims=64: isotropic 1536-d noise makes neighbors nearly equidistant
+    # and collapses HNSW recall even with a healthy index.
+    bulk_make_chunks(db_session, test_collection, 3000, seed=7, active_dims=64)
     db_session.execute(text("ANALYZE document_chunks"))
 
     rng = random.Random(99)
     top_k = 10
     recalls: list[float] = []
     for _ in range(20):
-        query = _random_unit_vector(rng)
+        query = _random_unit_vector(rng, active_dims=64)
         brute_ids = _brute_force_ids(
             db_session,
             query,
@@ -202,7 +217,7 @@ def test_hnsw_recall_vs_brute_force(db_session, test_collection) -> None:
 
 
 @pytest.mark.slow
-def test_hnsw_filtered_recall(db_session, test_collection) -> None:
+def test_hnsw_filtered_recall(db_session, test_collection, high_ef_search) -> None:
     bulk_make_chunks(
         db_session,
         test_collection,
@@ -210,6 +225,7 @@ def test_hnsw_filtered_recall(db_session, test_collection) -> None:
         seed=11,
         metadata={"doc_type": "contract"},
         metadata_every=2,
+        active_dims=64,
     )
     db_session.execute(text("ANALYZE document_chunks"))
 
@@ -218,7 +234,7 @@ def test_hnsw_filtered_recall(db_session, test_collection) -> None:
     top_k = 10
     recalls: list[float] = []
     for _ in range(20):
-        query = _random_unit_vector(rng)
+        query = _random_unit_vector(rng, active_dims=64)
         brute_ids = _brute_force_ids(
             db_session,
             query,
