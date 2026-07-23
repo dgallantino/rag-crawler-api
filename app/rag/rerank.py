@@ -1,38 +1,34 @@
 """Optional reranking of retrieved chunks.
 
-Only invoked when the service layer passes rerank=True. No dedicated
-cross-encoder/reranker model is available in this system, so this uses
-the completion client (LLM-as-reranker) supplied by the service layer.
+Only invoked when the service layer passes ``use_rerank=True``. The actual
+rerank provider is injected as ``RerankServiceFn`` (built in the service
+layer); this module only invokes it and falls back on failure.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import logging
-import re
-from typing import Any, Callable
+from typing import Callable
 
 from app.models import DocumentChunk
-from app.rag.retrieval import RetrievedChunk, retrieve
+from app.rag.retrieval import RetrievedChunk
 
 logger = logging.getLogger(__name__)
-
-_CONTENT_PREVIEW_LEN = 500
 
 
 @dataclass
 class RerankedChunk:
-    """A RetrievedChunk plus its rerank-stage similarity score."""
+    """A DocumentChunk plus its rerank-stage score."""
 
     chunk: DocumentChunk
     rerank_score: float
     similarity_score: float | None = None  # assigned later after rerank result remapped
 
 
-# contract for how service layer should supply rerank client
-# this module would parse the rerank response 
-RerankServiceFn = Callable[[str,int, list[RetrievedChunk]], list[RerankedChunk]]
+# Contract for the service-layer rerank provider.
+RerankServiceFn = Callable[[str, int, list[RetrievedChunk]], list[RerankedChunk]]
+
 
 def rerank(
     query: str,
@@ -40,14 +36,11 @@ def rerank(
     top_k: int,
     *,
     rerank_service_fn: RerankServiceFn,
-) -> list[RetrievedChunk]:
-    """Re-score `candidates` against `query` and return the top_k.
+) -> list[RerankedChunk] | list[RetrievedChunk]:
+    """Re-score ``candidates`` against ``query`` and return the top_k.
 
-    Uses a listwise LLM call returning a JSON array of chunk IDs.
-    On any failure, falls back to the original vector-search order.
+    On any failure, falls back to the original retrieval order.
     """
-
-    # if this is just a runner now maybe better to have a service layer that does this?
     if not rerank_service_fn:
         return []
 
