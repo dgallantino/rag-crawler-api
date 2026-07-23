@@ -1,6 +1,7 @@
 """CLI for administrative tasks such as system user provisioning."""
 
 import argparse
+import glob
 import json
 import sys
 import time
@@ -140,8 +141,28 @@ def cmd_create_system_user(args: argparse.Namespace) -> int:
     return 0
 
 
+def _expand_upload_paths(patterns: list[str]) -> list[Path]:
+    """Resolve --path values, expanding shell-style wildcards when present."""
+    paths: list[Path] = []
+    for pattern in patterns:
+        if glob.has_magic(pattern):
+            matches = sorted(
+                Path(match)
+                for match in glob.glob(pattern, recursive=True)
+                if Path(match).is_file()
+            )
+            if matches:
+                paths.extend(matches)
+            else:
+                # Preserve the pattern so callers report a clear "not found" error.
+                paths.append(Path(pattern))
+        else:
+            paths.append(Path(pattern))
+    return paths
+
+
 def cmd_upload_document(args: argparse.Namespace) -> int:
-    paths = [Path(p) for p in args.path]
+    paths = _expand_upload_paths(args.path)
     documents: list[dict] = []
     errors: list[dict] = []
 
@@ -443,7 +464,7 @@ def main(argv: list[str] | None = None) -> int:
         "--path",
         required=True,
         nargs="+",
-        help="Path(s) to local .md file(s)",
+        help="Path(s) to local .md file(s); wildcards like docs/*.md are expanded",
     )
     upload_parser.add_argument("--name", required=True, help="System user name")
     upload_parser.add_argument(

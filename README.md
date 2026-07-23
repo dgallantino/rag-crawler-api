@@ -90,6 +90,7 @@ Example workflow:
 python -m app.cli create-system-user --name dev --collection "My Docs"
 python -m app.cli upload-document --path doc.md --name dev --collection-slug my-docs
 python -m app.cli upload-document --path a.md b.md c.md --name dev --collection-slug my-docs
+python -m app.cli upload-document --path 'docs/*.md' --name dev --collection-slug my-docs
 python -m app.cli document-status --document-id <uuid> --name dev
 python -m app.cli query --query "What is X?" --name dev --collection-slug my-docs
 ```

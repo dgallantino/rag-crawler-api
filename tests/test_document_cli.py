@@ -82,6 +82,52 @@ def test_cli_upload_multiple_documents(
 
 
 @patch("app.services.documents.trigger_process_document")
+def test_cli_upload_document_wildcard(
+    mock_trigger, tmp_path, db_session, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr("app.cli.SessionLocal", MagicMock(return_value=db_session))
+    user, _ = create_system_user(db_session, name="Dev User")
+    create_collection(db_session, user, name="Dev Docs", slug="dev-docs")
+
+    (tmp_path / "a.md").write_text("# A\n", encoding="utf-8")
+    (tmp_path / "b.md").write_text("# B\n", encoding="utf-8")
+    (tmp_path / "skip.txt").write_text("nope", encoding="utf-8")
+
+    args = argparse.Namespace(
+        path=[str(tmp_path / "*.md")],
+        name="Dev User",
+        collection_slug="dev-docs",
+        json=False,
+    )
+    assert cmd_upload_document(args) == 0
+    assert mock_trigger.call_count == 2
+
+    out = capsys.readouterr().out
+    assert "accepted: a.md" in out
+    assert "accepted: b.md" in out
+
+
+def test_cli_upload_document_wildcard_no_match(
+    tmp_path, db_session, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr("app.cli.SessionLocal", MagicMock(return_value=db_session))
+    user, _ = create_system_user(db_session, name="Dev User")
+    create_collection(db_session, user, name="Dev Docs", slug="dev-docs")
+
+    pattern = str(tmp_path / "*.md")
+    args = argparse.Namespace(
+        path=[pattern],
+        name="Dev User",
+        collection_slug="dev-docs",
+        json=False,
+    )
+    assert cmd_upload_document(args) == 1
+
+    err = capsys.readouterr().err
+    assert "file not found" in err
+
+
+@patch("app.services.documents.trigger_process_document")
 def test_cli_upload_document_mixed_results(
     mock_trigger, tmp_path, db_session, monkeypatch, capsys
 ) -> None:
