@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     hnsw_iterative_scan: str = "relaxed_order"
     hnsw_max_scan_tuples: int = 20000
 
+    # Hybrid search (Postgres FTS + dense + RRF)
+    hybrid_search_enabled: bool = True
+    rrf_k: int = 60
+    hybrid_candidate_multiplier: int = 2
+
     # E2E test report output directory
     e2e_report_dir: str = "/tmp"
 
