@@ -74,7 +74,7 @@ python -m app.cli <command> [options]
 |---------|---------|
 | `create-system-user` | Provision a tenant and API key; optionally create collections |
 | `create-collection` | Create a collection for an existing system user |
-| `upload-document` | Upload a `.md` file to a collection (triggers Celery indexing) |
+| `upload-document` | Upload one or more `.md` files to a collection (triggers Celery indexing) |
 | `document-status` | Poll document processing status |
 | `retrieve` | Vector search over indexed chunks; use `--rerank` for reranking |
 | `query` | Retrieval + LLM-grounded answer |
@@ -82,12 +82,14 @@ python -m app.cli <command> [options]
 | `db delete-all` | Drop tables (`APP_ENV=development` only) |
 
 Shared flags for `retrieve` and `query`: `--query`, `--name`, `--collection-slug`, `--top-k`, `--rerank`, `--filters`, `--json`.
+`upload-document` also accepts `--json` for machine-readable output.
 
 Example workflow:
 
 ```bash
 python -m app.cli create-system-user --name dev --collection "My Docs"
 python -m app.cli upload-document --path doc.md --name dev --collection-slug my-docs
+python -m app.cli upload-document --path a.md b.md c.md --name dev --collection-slug my-docs
 python -m app.cli document-status --document-id <uuid> --name dev
 python -m app.cli query --query "What is X?" --name dev --collection-slug my-docs
 ```

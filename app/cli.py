@@ -141,49 +141,63 @@ def cmd_create_system_user(args: argparse.Namespace) -> int:
 
 
 def cmd_upload_document(args: argparse.Namespace) -> int:
-    path = Path(args.path)
-    if not path.is_file():
-        print(f"error: file not found: {path}", file=sys.stderr)
-        return 1
-
-    content = path.read_bytes()
-    validation = validate_markdown_upload(path.name, content)
-    if not validation.valid:
-        print(f"error: {validation.reason}", file=sys.stderr)
-        return 1
+    paths = [Path(p) for p in args.path]
+    documents: list[dict] = []
+    errors: list[dict] = []
 
     db = SessionLocal()
     try:
-        user = get_system_user_by_name(db, args.name)
-        collection = get_collection_by_slug(db, user, args.collection_slug)[0]
-        document = create_document_upload(
-            db,
-            collection,
-            path.name,
-            content.decode("utf-8"),
-        )
-    except SystemUserLookupError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    except CollectionNotFoundError as exc:
-        print(f"error: collection not found: {exc}", file=sys.stderr)
-        return 1
-    except DocumentConflictError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        try:
+            user = get_system_user_by_name(db, args.name)
+            collection = get_collection_by_slug(db, user, args.collection_slug)[0]
+        except SystemUserLookupError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except CollectionNotFoundError as exc:
+            print(f"error: collection not found: {exc}", file=sys.stderr)
+            return 1
+
+        for path in paths:
+            if not path.is_file():
+                errors.append({"filename": path.name, "error": f"file not found: {path}"})
+                continue
+
+            content = path.read_bytes()
+            validation = validate_markdown_upload(path.name, content)
+            if not validation.valid:
+                errors.append({"filename": path.name, "error": validation.reason})
+                continue
+
+            try:
+                document = create_document_upload(
+                    db,
+                    collection,
+                    path.name,
+                    content.decode("utf-8"),
+                )
+            except DocumentConflictError as exc:
+                errors.append({"filename": path.name, "error": str(exc)})
+                continue
+
+            documents.append(
+                {
+                    "document_id": str(document.id),
+                    "filename": path.name,
+                    "accepted": True,
+                }
+            )
     finally:
         db.close()
 
-    print(
-        json.dumps(
-            {
-                "document_id": str(document.id),
-                "filename": path.name,
-                "accepted": True,
-            }
-        )
-    )
-    return 0
+    if args.json:
+        print(json.dumps({"documents": documents, "errors": errors}))
+        return 0 if not errors else 1
+
+    for doc in documents:
+        print(f"accepted: {doc['filename']} (document_id={doc['document_id']})")
+    for err in errors:
+        print(f"error: {err['filename']}: {err['error']}", file=sys.stderr)
+    return 0 if not errors else 1
 
 
 def _parse_filters(value: str | None) -> dict | None:
@@ -422,13 +436,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     collection_parser.set_defaults(func=cmd_create_collection)
 
-    upload_parser = subparsers.add_parser("upload-document", help="Upload a markdown document")
-    upload_parser.add_argument("--path", required=True, help="Path to local .md file")
+    upload_parser = subparsers.add_parser(
+        "upload-document", help="Upload one or more markdown documents"
+    )
+    upload_parser.add_argument(
+        "--path",
+        required=True,
+        nargs="+",
+        help="Path(s) to local .md file(s)",
+    )
     upload_parser.add_argument("--name", required=True, help="System user name")
     upload_parser.add_argument(
         "--collection-slug",
         required=True,
         help="Slug of the collection to upload into",
+    )
+    upload_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results as JSON instead of human-readable text",
     )
     upload_parser.set_defaults(func=cmd_upload_document)
 
