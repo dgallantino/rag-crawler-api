@@ -13,7 +13,7 @@ upload → Document row → Celery process_document → MarkdownProcessor → Do
 **Query:**
 
 ```
-query text → embed → vector search → optional rerank → optional LLM answer
+query text → embed → dense vector search + Postgres FTS → RRF fuse → optional rerank → optional LLM answer
 ```
 
 ```mermaid
@@ -25,7 +25,11 @@ flowchart LR
   Proc --> Embed[embed_texts]
   Proc --> Store[DocumentChunk rows]
   Query[CLI retrieve/query] --> RS[retrieval_service]
-  RS --> Ret[vector_search]
+  RS --> Ret[retrieve hybrid]
+  Ret --> Dense[vector_search]
+  Ret --> FTS[fts_search]
+  Dense --> RRF[rrf_fuse]
+  FTS --> RRF
   RS --> Rerank[rerank optional]
   Query --> Ans[answer_service]
   Ans --> Gen[answer_with_retrieval]
@@ -76,11 +80,12 @@ Embeddings use **raw chunk text only** — title/heading are not prefixed into t
 | Store | PostgreSQL + pgvector |
 | Table | `document_chunks` (`DocumentChunk` model) |
 | Column | `chunk_vector Vector(1536)` |
-| Index | None — sequential scan + sort (HNSW/IVFFlat planned) |
+| Dense index | HNSW (`ix_document_chunks_chunk_vector_hnsw`, `vector_cosine_ops`) |
+| Lexical | Generated `content_tsv` (`to_tsvector('simple', ...)`) + GIN |
 
 ### Distance metric
 
-Search uses pgvector **cosine distance**:
+Dense search uses pgvector **cosine distance**:
 
 ```python
 DocumentChunk.chunk_vector.cosine_distance(query_vector)
@@ -92,7 +97,11 @@ Results are ordered ascending (lower distance = more similar). Distance is conve
 similarity = clamp(1 - distance, 0, 1)
 ```
 
-Implementation: `vector_search()` and `_distance_to_score()` in `app/rag/retrieval.py`.
+### Hybrid retrieval
+
+By default `retrieve()` runs dense + Postgres FTS in parallel, then merges with Reciprocal Rank Fusion (RRF, `k=60`). Each leg over-fetches `top_k * hybrid_candidate_multiplier` (default 2) before fusion. FTS uses the `simple` config (no English stemming) so Indonesian and exact tokens stay intact. Set `HYBRID_SEARCH_ENABLED=false` for vector-only behavior.
+
+Implementation: `vector_search()`, `fts_search()`, `rrf_fuse()`, and `retrieve()` in `app/rag/retrieval.py`.
 
 ### Scoping
 
@@ -110,7 +119,7 @@ Reranking is optional and off by default in the CLI (`--rerank` to enable). The 
 
 **How it works** (`retrieval_service` in `app/services/rag.py`):
 
-1. When rerank is enabled, vector search fetches **`top_k × 4`** candidates (over-fetch pool).
+1. When rerank is enabled, retrieval fetches **`top_k × 4`** candidates (over-fetch pool).
 2. POST to OpenRouter rerank API with `query`, `documents` (chunk texts), and `top_n`.
 3. Response maps `index` back to original candidates and `relevance_score` → `rerank_score`.
 4. On any failure, falls back to original vector-search order.
@@ -199,11 +208,12 @@ SystemUser → Collection → Document → DocumentChunk
 | `CHUNK_MAX_TOKENS` | 500 | Max chunk size in tokens |
 | `CHUNK_OVERLAP_PERCENT` | 10 | Overlap as percentage of max |
 | `CHUNK_MIN_TOKENS` | 300 | Merge undersized consecutive chunks (capped by max) |
+| `HYBRID_SEARCH_ENABLED` | `true` | Dense + FTS + RRF (set `false` for vector-only) |
+| `RRF_K` | 60 | RRF constant `k` |
+| `HYBRID_CANDIDATE_MULTIPLIER` | 2 | Per-leg over-fetch as multiple of `top_k` |
 
 ## Known Limitations
 
-- No vector index (HNSW/IVFFlat) — full table scan
-- No hybrid / BM25 search
 - `owner_ref` filter is unused (tenant scoping via `get_collection_by_slug` in `retrieval_service`)
 - HTTP `/v1/query` still stubbed — `max_tokens_context` is wired through services/CLI only
 - Markdown path embeds raw text without title/heading prefix
