@@ -408,3 +408,40 @@ def test_retrieval_service_does_not_call_rerank_by_default(
     )
 
     assert rerank_called is False
+
+
+def test_retrieval_service_overfetches_when_rerank_enabled(
+    db_session, test_user, test_collection, monkeypatch
+):
+    """T6: with use_rerank=True and top_k=5, retrieve must be called with top_k=20."""
+    settings = _mock_rag_settings(monkeypatch)
+    settings.rerank_model = "cohere/rerank-v3.5"
+    user, _ = test_user
+    captured: dict = {}
+
+    def mock_retrieve(query, top_k, filters, collection, *, session, embed_fn):
+        captured["top_k"] = top_k
+        return []
+
+    monkeypatch.setattr("app.services.rag.retrieve", mock_retrieve)
+    monkeypatch.setattr("app.services.rag.rerank", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "app.services.rag.create_embed_fn",
+        lambda s: lambda text: [0.0] * 1536,
+    )
+    monkeypatch.setattr(
+        "app.services.rag.create_rerank_fn",
+        lambda s: lambda *a, **k: [],
+    )
+
+    retrieval_service(
+        query="q",
+        top_k=5,
+        filters=None,
+        user=user,
+        collection_slug="test-collection",
+        use_rerank=True,
+        session=db_session,
+    )
+
+    assert captured["top_k"] == 20

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import random
 from datetime import datetime
 from uuid import uuid4
 
@@ -13,6 +15,14 @@ def _vec(*values: float) -> list[float]:
     for index, value in enumerate(values):
         vector[index] = value
     return vector
+
+
+def _random_unit_vector(rng: random.Random, *, active_dims: int = 1536) -> list[float]:
+    """Unit vector; ``active_dims`` < 1536 lowers intrinsic dimension for recall tests."""
+    active = max(1, min(active_dims, 1536))
+    vec = [rng.gauss(0.0, 1.0) for _ in range(active)] + [0.0] * (1536 - active)
+    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+    return [x / norm for x in vec]
 
 
 def _make_chunk(
@@ -46,3 +56,53 @@ def _make_chunk(
     db_session.add(chunk)
     db_session.commit()
     return chunk
+
+
+def bulk_make_chunks(
+    db_session,
+    collection,
+    count: int,
+    *,
+    seed: int = 0,
+    metadata: dict | None = None,
+    metadata_every: int | None = None,
+    active_dims: int = 1536,
+) -> list[DocumentChunk]:
+    """Insert ``count`` synthetic chunks with random unit vectors.
+
+    Creates a single parent document for efficiency. When ``metadata_every``
+    is set (e.g. 2), every Nth chunk gets ``metadata``; others get {}.
+    """
+    rng = random.Random(seed)
+    document = Document(
+        collection_id=collection.id,
+        url=f"file://bulk-{uuid4()}.md",
+        title="bulk.md",
+        content="bulk",
+    )
+    db_session.add(document)
+    db_session.flush()
+
+    created_at = datetime(2024, 6, 15, 12, 0, 0)
+    chunks: list[DocumentChunk] = []
+    for index in range(count):
+        if metadata is not None and metadata_every is not None:
+            chunk_metadata = metadata if index % metadata_every == 0 else {}
+        else:
+            chunk_metadata = metadata
+        chunk = DocumentChunk(
+            document_id=document.id,
+            collection_id=collection.id,
+            chunk_index=index,
+            content=f"bulk-chunk-{index}",
+            chunk_metadata=chunk_metadata,
+            created_at=created_at,
+            chunk_vector=_random_unit_vector(rng, active_dims=active_dims),
+        )
+        chunks.append(chunk)
+        db_session.add(chunk)
+        if (index + 1) % 500 == 0:
+            db_session.flush()
+
+    db_session.commit()
+    return chunks

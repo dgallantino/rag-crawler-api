@@ -4,8 +4,8 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, Uuid
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Computed, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, Uuid
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -69,6 +69,18 @@ class DocumentChunk(Base):
             "chunk_metadata",
             postgresql_using="gin",
         ),
+        Index(
+            "ix_document_chunks_chunk_vector_hnsw",
+            "chunk_vector",
+            postgresql_using="hnsw",
+            postgresql_ops={"chunk_vector": "vector_cosine_ops"},
+            postgresql_with={"m": 16, "ef_construction": 64},
+        ),
+        Index(
+            "ix_document_chunks_content_tsv_gin",
+            "content_tsv",
+            postgresql_using="gin",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -80,9 +92,13 @@ class DocumentChunk(Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_tsv: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('simple', coalesce(content, ''))", persisted=True),
+    )
     chunk_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
-    chunk_vector: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    chunk_vector: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
     collection: Mapped["Collection"] = relationship(back_populates="chunks")

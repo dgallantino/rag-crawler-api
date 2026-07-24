@@ -80,10 +80,15 @@ def api_key_secret() -> str:
     return "test-secret"
 
 
-@pytest.fixture
-def test_user(db_session, api_key_secret: str, monkeypatch):
+@pytest.fixture(autouse=True)
+def _ensure_settings_secret(api_key_secret: str, monkeypatch):
+    """vector_search reads HNSW knobs via get_settings(); ensure required secret exists."""
     monkeypatch.setenv("API_KEY_HASH_SECRET", api_key_secret)
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def test_user(db_session, api_key_secret: str):
     user, api_key = create_system_user(db_session, name="Test Tenant")
     return user, api_key
 
