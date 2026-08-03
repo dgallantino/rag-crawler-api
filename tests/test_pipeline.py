@@ -50,8 +50,17 @@ def test_process_document_success(
     assert document.status == "success"
     assert document.error_message is None
 
+    processor.embed_texts.assert_called_once_with(
+        [
+            "Title: pipeline.md\nHeading: Pipeline\n\nchunk one",
+            "Title: pipeline.md\nHeading: Pipeline\n\nchunk two",
+        ]
+    )
+
     chunks = db_session.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).all()
     assert len(chunks) == 2
+    assert chunks[0].content == "chunk one"
+    assert chunks[1].content == "chunk two"
     assert chunks[0].chunk_metadata == {"section_header": "Pipeline"}
     assert chunks[0].collection_id == test_collection.id
 
