@@ -43,7 +43,7 @@ Prioritized additions for this stack:
 
 1. ~~**HNSW / IVFFlat** on `DocumentChunk.chunk_vector` — cosine search is currently an unindexed sequential sort. Implement and benchmark a vector index (assess current state, recommend HNSW, define scope and required tests, and perform a smoke test).~~
 2. ~~**Hybrid search** — Combine Postgres FTS, dense vector retrieval, and RRF fusion (not BM25) into a unified hybrid search pipeline.~~
-3. **Contextualized embeddings on the markdown path** — prefix title/heading into embed text (crawler `EmbeddingInputBuilder` already does this; RAG markdown path stores raw chunk text).
+3. ~~**Contextualized embeddings on the markdown path** — prefix title/heading into embed text (crawler `EmbeddingInputBuilder` already does this; RAG markdown path stores raw chunk text).~~
 4. **Adjacent-chunk merge** before building LLM context; then **query rewrite / multi-query** if recall still lags.
 5. **Embedding / answer caching** via Redis (today Redis is used for job status only).
 6. **Offline eval harness** — golden Q&A sets and metrics; do not rely only on optional live OpenRouter e2e smoke.

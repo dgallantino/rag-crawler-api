@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentChunk
 from app.rag.events import DocumentStatusEvent, DocumentStatusHandler
+from app.utils import build_contextualized_embedding_text
 
 BATCH_SIZE = 100
 
@@ -116,7 +117,15 @@ class DocumentProcessor(ABC):
             on_status(DocumentStatusEvent(document_id, "chunking", "completed"))
 
             on_status(DocumentStatusEvent(document_id, "embedding", "in_progress"))
-            vectors = self.embed_texts([chunk.content for chunk in chunks])
+            embed_inputs = [
+                build_contextualized_embedding_text(
+                    chunk.content,
+                    title=document.title,
+                    heading=(chunk.metadata or {}).get("section_header"),
+                )
+                for chunk in chunks
+            ]
+            vectors = self.embed_texts(embed_inputs)
             on_status(DocumentStatusEvent(document_id, "embedding", "completed"))
 
             on_status(DocumentStatusEvent(document_id, "storing", "in_progress"))
