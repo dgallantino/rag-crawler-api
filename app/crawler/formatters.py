@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Iterator
 
+from app.utils import build_contextualized_embedding_text
+
 from .pipeline import BaseStage, Item, StageContext
 from .schemas import CrawlerData, EmbeddingInput, PageChunk
 
@@ -81,13 +83,8 @@ class EmbeddingInputBuilder(BaseStage):
 
     @staticmethod
     def _embedding_text(chunk: PageChunk, heading: str | None) -> str:
-        context_lines = []
-        if chunk.title:
-            context_lines.append(f"Title: {chunk.title}")
-        if heading:
-            context_lines.append(f"Heading: {heading}")
-
-        if not context_lines:
-            return chunk.text
-
-        return "\n".join(context_lines) + f"\n\n{chunk.text}"
+        return build_contextualized_embedding_text(
+            chunk.text,
+            title=chunk.title,
+            heading=heading,
+        )
