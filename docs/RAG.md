@@ -71,7 +71,7 @@ Documents are processed by `MarkdownProcessor` (`app/rag/processor.py`), the onl
 
 At ingest, `embed_texts()` calls `client.embeddings.create()` in batches of 100. At query time, `create_embed_fn()` embeds a single query string.
 
-Embeddings use **raw chunk text only** — title/heading are not prefixed into the embed input on the markdown path.
+**Ingest embed input is contextualized** via `build_contextualized_embedding_text()`: optional `Title: {Document.title}` and `Heading: {section_header}` lines are prefixed before the chunk body (same format as crawler `EmbeddingInputBuilder`). Stored `DocumentChunk.content`, FTS (`content_tsv`), rerank documents, and LLM context remain the **raw** chunk body. Query embeddings stay unprefixed. Documents processed before this change keep raw-only vectors until reprocessed (`process_document` again).
 
 ### Vector store
 
