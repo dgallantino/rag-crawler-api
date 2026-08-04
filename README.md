@@ -41,7 +41,8 @@ flowchart LR
 | Health endpoints (`/health`, `/health/db`) | Working |
 | REST `/v1/*` business routes | Contract defined; handlers return 501 |
 | Crawler library | Skeletal; not wired to API, Celery, or DB |
-| Auth, Alembic migrations, CI | Planned |
+| CI (GitHub Actions pytest) | Working (e2e still opt-in) |
+| Auth wiring, Alembic migrations | Planned |
 
 See [docs/RAG.md](docs/RAG.md) for RAG technical details and [docs/ROADMAP.md](docs/ROADMAP.md) for planned work.
 
@@ -51,6 +52,7 @@ The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI r
 
 | Method | Path | Request → Response | Status |
 |--------|------|--------------------|--------|
+| `GET` | `/` | — → `MessageResponse` | 501 |
 | `GET` | `/health` | — → `HealthResponse` | Working |
 | `GET` | `/health/db` | — → `HealthResponse` | Working |
 | `POST` | `/v1/collections` | `CollectionCreateRequest` → `CollectionCreateResponse` | 501 |
@@ -80,6 +82,7 @@ python -m app.cli <command> [options]
 | `query` | Retrieval + LLM-grounded answer |
 | `db create-all` | Create tables (`APP_ENV=development` only) |
 | `db delete-all` | Drop tables (`APP_ENV=development` only) |
+| `run-crawler` | Registered but disabled (`NotImplementedError`) |
 
 Shared flags for `retrieve` and `query`: `--query`, `--name`, `--collection-slug`, `--top-k`, `--rerank`, `--filters`, `--json`.
 `upload-document` also accepts `--json` for machine-readable output.
@@ -119,7 +122,7 @@ uvicorn app.main:app --reload --port 8000
 For indexing and querying, also start a Celery worker:
 
 ```bash
-celery -A app.celery_app worker --loglevel=info
+celery -A app.services.jobs:celery_app worker --loglevel=info
 ```
 
 ## Quick Start (Docker)
