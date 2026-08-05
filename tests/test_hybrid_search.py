@@ -14,10 +14,10 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.models import DocumentChunk
+from app.rag.chunks import ScoredChunk
 from app.rag.retrieval import (
-    RetrievedChunk,
     fts_search,
-    retrieve,
+    _retrieve,
     rrf_fuse,
 )
 from tests.rag_helpers import _make_chunk, _vec
@@ -185,20 +185,20 @@ def test_rrf_fuse_prefers_dual_high_ranks_and_keeps_singletons() -> None:
     c = DocumentChunk(id=uuid4(), content="c", chunk_index=2, chunk_vector=[0.0])
 
     dense = [
-        RetrievedChunk(chunk=a, similarity_score=0.9),
-        RetrievedChunk(chunk=b, similarity_score=0.8),
+        ScoredChunk(chunk=a, score=0.9, retrieval_score=0.9),
+        ScoredChunk(chunk=b, score=0.8, retrieval_score=0.8),
     ]
     lexical = [
-        RetrievedChunk(chunk=a, similarity_score=0.7),
-        RetrievedChunk(chunk=c, similarity_score=0.6),
+        ScoredChunk(chunk=a, score=0.7, retrieval_score=0.7),
+        ScoredChunk(chunk=c, score=0.6, retrieval_score=0.6),
     ]
 
     fused = rrf_fuse([dense, lexical], k=60, top_k=3)
 
     assert fused[0].chunk.id == a.id
     assert {fused[1].chunk.id, fused[2].chunk.id} == {b.id, c.id}
-    assert fused[0].similarity_score > fused[1].similarity_score
-    assert fused[1].similarity_score == pytest.approx(fused[2].similarity_score)
+    assert fused[0].score > fused[1].score
+    assert fused[1].score == pytest.approx(fused[2].score)
 
 
 def test_rrf_fuse_stable_tie_break_by_chunk_id() -> None:
@@ -216,8 +216,8 @@ def test_rrf_fuse_stable_tie_break_by_chunk_id() -> None:
 
     fused = rrf_fuse(
         [
-            [RetrievedChunk(chunk=chunk_first, similarity_score=1.0)],
-            [RetrievedChunk(chunk=chunk_second, similarity_score=1.0)],
+            [ScoredChunk(chunk=chunk_first, score=1.0, retrieval_score=1.0)],
+            [ScoredChunk(chunk=chunk_second, score=1.0, retrieval_score=1.0)],
         ],
         k=60,
         top_k=2,
@@ -253,7 +253,7 @@ def test_retrieve_hybrid_fuses_vector_and_fts(
         chunk_index=1,
     )
 
-    results = retrieve(
+    results = _retrieve(
         query="UNIQUELEXEME99",
         top_k=2,
         filters=None,
@@ -294,7 +294,7 @@ def test_retrieve_hybrid_disabled_is_vector_only(
         chunk_index=1,
     )
 
-    results = retrieve(
+    results = _retrieve(
         query="UNIQUELEXEME99",
         top_k=1,
         filters=None,
@@ -305,6 +305,6 @@ def test_retrieve_hybrid_disabled_is_vector_only(
 
     assert len(results) == 1
     assert results[0].chunk.id == closer.id
-    assert results[0].similarity_score == pytest.approx(1.0, abs=1e-4)
+    assert results[0].score == pytest.approx(1.0, abs=1e-4)
 
     get_settings.cache_clear()
