@@ -5,16 +5,16 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.models import SystemUser
-from app.rag.generation import RagResponse, answer_with_retrieval, normalize_chunks
-from app.rag.rerank import RerankServiceFn, RerankedChunk, rerank
+from app.rag.chunks import ScoredChunk
+from app.rag.generation import RagResponse, answer_with_retrieval
+from app.rag.rerank import rerank
 from app.rag.processor import MarkdownProcessor
-from app.rag.retrieval import EmbedFn, RetrievedChunk, retrieve
+from app.rag.retrieval import EmbedFn, retrieve
 from app.schemas.query import ChunkSource, RetrievalChunk, RetrievalResult
 from app.services.collections import get_collection_by_slug
 
 from openai import OpenAI
 
-settings = get_settings()
 
 def retrieval_service(
     query: str,
@@ -25,7 +25,7 @@ def retrieval_service(
     collection_slug: str | None = None,
     use_rerank: bool = False,
     session: Session,
-) -> list[RetrievedChunk] | list[RerankedChunk]:
+) -> list[ScoredChunk]:
     """Retrieve and optionally rerank relevant chunks for a query.
 
     Resolves collections via ``get_collection_by_slug`` (raises
@@ -53,7 +53,7 @@ def retrieval_service(
     return candidates[:top_k]
 
 
-def _chunk_to_retrieval_chunk(item: RetrievedChunk | RerankedChunk) -> RetrievalChunk:
+def _chunk_to_retrieval_chunk(item: ScoredChunk) -> RetrievalChunk:
     chunk = item.chunk
     meta = chunk.chunk_metadata or {}
     source = None
@@ -63,18 +63,17 @@ def _chunk_to_retrieval_chunk(item: RetrievedChunk | RerankedChunk) -> Retrieval
             page=meta.get("page"),
             url=chunk.document.url,
         )
-    score = getattr(item, "rerank_score", item.similarity_score)
     return RetrievalChunk(
         chunk_id=str(chunk.id),
         text=chunk.content,
-        score=score,
+        score=item.score,
         source=source,
     )
 
 
 def chunks_to_retrieval_result(
     query: str,
-    chunks: list[RetrievedChunk] | list[RerankedChunk],
+    chunks: list[ScoredChunk],
     *,
     top_k: int,
     use_rerank: bool,
@@ -92,7 +91,7 @@ def chunks_to_retrieval_result(
 
 def answer_service(
     query: str,
-    candidates: list[RetrievedChunk] | list[RerankedChunk],
+    candidates: list[ScoredChunk],
     *,
     max_tokens_context: int | None = None,
 ) -> RagResponse:
@@ -101,7 +100,7 @@ def answer_service(
     completion_client = create_openai_client(settings)
     return answer_with_retrieval(
         query,
-        normalize_chunks(candidates),
+        candidates,
         completion_client,
         completion_model=settings.completion_model,
         max_tokens_context=max_tokens_context,
@@ -130,8 +129,7 @@ def create_embed_fn(settings: Settings) -> EmbedFn:
     return embed
 
 
-
-def create_rerank_fn(settings: Settings) -> RerankServiceFn:
+def create_rerank_fn(settings: Settings):
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not configured")
 
@@ -139,8 +137,8 @@ def create_rerank_fn(settings: Settings) -> RerankServiceFn:
     model = settings.rerank_model
 
     def rerank_fn(
-        query: str, top_k: int, chunks: list[RetrievedChunk]
-    ) -> list[RerankedChunk]:
+        query: str, top_k: int, chunks: list[ScoredChunk]
+    ) -> list[ScoredChunk]:
         if not chunks:
             return []
 
@@ -160,15 +158,16 @@ def create_rerank_fn(settings: Settings) -> RerankServiceFn:
         )
         response.raise_for_status()
 
-        reranked: list[RerankedChunk] = []
+        reranked: list[ScoredChunk] = []
         for result in response.json()["results"]:
             # Re-map the index to the original chunk
             original = chunks[result["index"]]
             reranked.append(
-                RerankedChunk(
+                ScoredChunk(
                     chunk=original.chunk,
+                    score=result["relevance_score"],
+                    retrieval_score=original.retrieval_score,
                     rerank_score=result["relevance_score"],
-                    similarity_score=original.similarity_score,
                 )
             )
         return reranked
@@ -185,5 +184,3 @@ def create_markdown_processor(settings: Settings) -> MarkdownProcessor:
         chunk_min_tokens=settings.chunk_min_tokens,
         chunk_overlap_percent=settings.chunk_overlap_percent,
     )
-
-

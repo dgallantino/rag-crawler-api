@@ -13,10 +13,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models import DocumentChunk
+from app.rag.chunks import ScoredChunk
 from app.rag.tokens import token_length
-from app.rag.rerank import RerankedChunk
-from app.rag.retrieval import RetrievedChunk
 
 _SYSTEM_PROMPT = (
     "You are a helpful assistant. Answer the question using only the provided context. "
@@ -34,14 +32,6 @@ class Source(BaseModel):
 class RagResponse(BaseModel):
     answer: str
     sources: list[Source]
-
-
-@dataclass
-class ScoredChunk:
-    """A RetrievedChunk or RerankedChunk that has been normalized."""
-
-    chunk: DocumentChunk
-    score: float
 
 
 def _strip_leading_overlap(previous: str, current: str) -> str:
@@ -93,18 +83,6 @@ class MergedChunk:
             return f"{self.document_id}#{indices[0]}"
         joined = ",".join(str(i) for i in indices)
         return f"{self.document_id}#[{joined}]"
-
-
-def normalize_chunks(chunks: list[RetrievedChunk] | list[RerankedChunk]) -> list[ScoredChunk]:
-    """Normalize chunks by extracting the chunk and score."""
-    return [
-        ScoredChunk(
-            chunk=chunk.chunk,
-            score=getattr(chunk, "rerank_score", getattr(chunk, "similarity_score", None)),
-        )
-        for chunk in chunks
-        if chunk.chunk is not None
-    ]
 
 
 def merge_adjacent_chunks(chunks: list[ScoredChunk]) -> list[MergedChunk]:
