@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 import httpx
 from sqlalchemy.orm import Session
 
@@ -7,9 +9,8 @@ from app.config import Settings, get_settings
 from app.models import SystemUser
 from app.rag.chunks import ScoredChunk
 from app.rag.generation import RagResponse, answer_with_retrieval
-from app.rag.rerank import rerank
 from app.rag.processor import MarkdownProcessor
-from app.rag.retrieval import EmbedFn, retrieve
+from app.rag.retrieval import EmbedFn, RerankServiceFn, Retriever
 from app.schemas.query import ChunkSource, RetrievalChunk, RetrievalResult
 from app.services.collections import get_collection_by_slug
 
@@ -30,27 +31,19 @@ def retrieval_service(
 
     Resolves collections via ``get_collection_by_slug`` (raises
     ``CollectionNotFoundError`` when none match). Tenant scoping is entirely
-    in that lookup — ``retrieve`` only receives collection UUID(s).
+    in that lookup — the retriever only receives collection UUID(s).
     """
-    settings = get_settings()
-    embed_fn = create_embed_fn(settings)
-
     collections = get_collection_by_slug(session, user, collection_slug)
     collection_ids = [str(c.id) for c in collections]
 
-    initial_retrieve_k = top_k if not use_rerank else top_k * 4
-    candidates = retrieve(
+    return get_retriever().retrieve(
         query,
-        initial_retrieve_k,
+        top_k,
         filters,
         collection_ids,
         session=session,
-        embed_fn=embed_fn,
+        use_rerank=use_rerank,
     )
-
-    if use_rerank:
-        return rerank(query, candidates, top_k, rerank_service_fn=create_rerank_fn(settings))
-    return candidates[:top_k]
 
 
 def _chunk_to_retrieval_chunk(item: ScoredChunk) -> RetrievalChunk:
@@ -107,6 +100,17 @@ def answer_service(
     )
 
 
+@lru_cache(maxsize=1)
+def get_retriever() -> Retriever:
+    """Process-wide Retriever so provider clients are built once, not per request."""
+    settings = get_settings()
+    return Retriever(
+        embed_fn=create_embed_fn(settings),
+        rerank_fn=create_rerank_fn(settings),
+        rerank_expansion_factor=settings.rerank_expansion_factor,
+    )
+
+
 def create_openai_client(settings: Settings) -> OpenAI:
     """Embedding client factory."""
     if not settings.openrouter_api_key:
@@ -129,7 +133,7 @@ def create_embed_fn(settings: Settings) -> EmbedFn:
     return embed
 
 
-def create_rerank_fn(settings: Settings):
+def create_rerank_fn(settings: Settings) -> RerankServiceFn:
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not configured")
 

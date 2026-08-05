@@ -1,13 +1,15 @@
 """Hybrid retrieval over DocumentChunk (dense + Postgres FTS + RRF).
 
 Responsible for turning a query into a ranked list of candidate chunks
-from Postgres/pgvector and full-text search. Does not call any LLMs and
-does not know about answer generation — see rerank.py and generation.py
-for those. Optional Cohere rerank still happens in the service layer.
+from Postgres/pgvector and full-text search, with optional reranking
+orchestrated by ``Retriever``. Does not call any LLMs and does not know
+about answer generation — see generation.py for that. The embedding and
+rerank providers are injected by the service layer.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time
 from typing import Callable
 from uuid import UUID
@@ -19,9 +21,13 @@ from app.config import get_settings
 from app.models import DocumentChunk
 from app.rag.chunks import ScoredChunk
 
+logger = logging.getLogger(__name__)
 
 EmbedFn = Callable[[str], list[float]]
 
+# Contract for the service-layer rerank provider:
+# (query, top_k, candidates) -> reranked chunks with rerank_score set.
+RerankServiceFn = Callable[[str, int, list[ScoredChunk]], list[ScoredChunk]]
 
 
 def embed_query(query: str, embed_fn: EmbedFn) -> list[float]:
@@ -38,7 +44,7 @@ def _apply_hnsw_session_settings(session: Session, *, top_k: int) -> None:
     """Set LOCAL pgvector HNSW GUCs for the current transaction.
 
     ef_search scales with top_k so rerank over-fetch (top_k *
-    rerank over-fetch from the service layer) naturally requests a wider ANN
+    rerank_expansion_factor in Retriever) naturally requests a wider ANN
     candidate pool.
 
     PostgreSQL SET does not accept bind parameters, so values are inlined
@@ -216,7 +222,7 @@ def _distance_to_score(distance: float) -> float:
     return max(0.0, min(1.0, 1.0 - distance))
 
 
-def retrieve(
+def _retrieve(
     query: str,
     top_k: int,
     filters: dict | None,
@@ -263,3 +269,72 @@ def retrieve(
         k=settings.rrf_k,
         top_k=top_k,
     )
+
+
+class Retriever:
+    """Orchestrates hybrid retrieval and optional reranking.
+
+    Holds the injected embedding/rerank providers plus the rerank over-fetch
+    policy, so it can be constructed once (per process) by the service layer.
+    The DB session is per-request state and is always passed per call.
+    """
+
+    def __init__(
+        self,
+        *,
+        embed_fn: EmbedFn,
+        rerank_fn: RerankServiceFn | None = None,
+        rerank_expansion_factor: int = 4,
+    ) -> None:
+        self._embed_fn = embed_fn
+        self._rerank_fn = rerank_fn
+        self._rerank_expansion_factor = rerank_expansion_factor
+
+    def retrieve(
+        self,
+        query: str,
+        top_k: int,
+        filters: dict | None,
+        collection: list[str],
+        *,
+        session: Session,
+        use_rerank: bool = False,
+    ) -> list[ScoredChunk]:
+        """Retrieve top_k chunks, over-fetching then reranking when requested."""
+        initial_k = top_k * self._rerank_expansion_factor if use_rerank else top_k
+        candidates = _retrieve(
+            query,
+            initial_k,
+            filters,
+            collection,
+            session=session,
+            embed_fn=self._embed_fn,
+        )
+
+        if not use_rerank:
+            return candidates[:top_k]
+        return self._rerank(query, candidates, top_k)
+
+    def _rerank(
+        self,
+        query: str,
+        candidates: list[ScoredChunk],
+        top_k: int,
+    ) -> list[ScoredChunk]:
+        """Re-score candidates; on any failure fall back to retrieval order."""
+        if self._rerank_fn is None:
+            logger.warning(
+                "use_rerank requested but no rerank provider configured; "
+                "falling back to retrieval order"
+            )
+            return candidates[:top_k]
+
+        try:
+            reranked = self._rerank_fn(query, top_k, candidates)
+        except Exception:
+            logger.warning(
+                "Rerank failed; falling back to retrieval order", exc_info=True
+            )
+            return candidates[:top_k]
+
+        return reranked[:top_k]
