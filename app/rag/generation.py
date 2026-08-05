@@ -14,7 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.models import DocumentChunk
-from app.rag.processor import _token_length
+from app.rag.tokens import token_length
 from app.rag.rerank import RerankedChunk
 from app.rag.retrieval import RetrievedChunk
 
@@ -163,7 +163,7 @@ def build_context(
 
         block = f"[source: {merged.source_label()}]\n{content}"
         separator = "\n\n" if parts else ""
-        block_tokens = _token_length(separator + block) if max_tokens is not None else 0
+        block_tokens = token_length(separator + block) if max_tokens is not None else 0
 
         if max_tokens is not None and total_tokens + block_tokens > max_tokens:
             break

@@ -5,13 +5,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from uuid import UUID
 
-import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentChunk
 from app.rag.events import DocumentStatusEvent, DocumentStatusHandler
+from app.rag.tokens import token_length
 from app.utils import build_contextualized_embedding_text
 
 BATCH_SIZE = 100
@@ -20,7 +20,6 @@ HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 TAGS_PATTERN = re.compile(r"^tags:\s*\[(.*?)\]", re.MULTILINE)
 
-_encoding: tiktoken.Encoding | None = None
 
 
 @dataclass(frozen=True)
@@ -28,16 +27,6 @@ class ChunkResult:
     content: str
     metadata: dict
 
-
-def _get_encoding() -> tiktoken.Encoding:
-    global _encoding
-    if _encoding is None:
-        _encoding = tiktoken.get_encoding("cl100k_base")
-    return _encoding
-
-
-def _token_length(text: str) -> int:
-    return len(_get_encoding().encode(text))
 
 
 def _extract_frontmatter_tags(text: str) -> list[str]:
@@ -173,12 +162,12 @@ def _merge_undersized_chunks(
 
     merged: list[str] = [chunks[0]]
     for chunk in chunks[1:]:
-        if _token_length(chunk) >= chunk_min_tokens:
+        if token_length(chunk) >= chunk_min_tokens:
             merged.append(chunk)
             continue
 
         combined = merged[-1] + "\n\n" + chunk
-        if _token_length(combined) <= chunk_max_tokens:
+        if token_length(combined) <= chunk_max_tokens:
             merged[-1] = combined
         else:
             merged.append(chunk)
@@ -206,7 +195,7 @@ class MarkdownProcessor(DocumentProcessor):
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=self._chunk_max_tokens,
             chunk_overlap=overlap,
-            length_function=_token_length,
+            length_function=token_length,
             separators=["\n## ", "\n### ", "\n#### ", "\n\n", "\n", " "],
         )
 
