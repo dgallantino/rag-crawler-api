@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     embedding_model: str = "openai/text-embedding-3-small"
     completion_model: str = "openai/gpt-4o-mini"
     rerank_model: str = "cohere/rerank-v3.5"
+    # Over-fetch multiplier for retrieval when reranking (retrieve top_k * N)
+    rerank_expansion_factor: int = 4
 
     # pgvector HNSW session tuning (applied around vector_search)
     hnsw_ef_search: int = 40

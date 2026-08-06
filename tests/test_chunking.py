@@ -25,7 +25,10 @@ def processor() -> MarkdownProcessor:
 
 @pytest.fixture(autouse=True)
 def mock_tiktoken(monkeypatch):
-    monkeypatch.setattr("app.rag.processor._get_encoding", lambda: _FakeEncoding())
+    def fake_token_length(text: str) -> int:
+        return len(text.encode("utf-8"))
+
+    monkeypatch.setattr("app.rag.processor.token_length", fake_token_length)
 
 
 def test_chunk_extracts_section_header_and_all_headings(processor: MarkdownProcessor) -> None:
@@ -57,8 +60,11 @@ def test_chunk_extracts_frontmatter_tags(processor: MarkdownProcessor) -> None:
     assert chunks[0].metadata.get("tags") == ["python", "rag"]
 
 
-def test_chunk_merges_undersized_chunks() -> None:
-    from app.rag.processor import _token_length
+def test_chunk_merges_undersized_chunks(monkeypatch) -> None:
+    def fake_token_length(text: str) -> int:
+        return len(text.encode("utf-8"))
+
+    monkeypatch.setattr("app.rag.processor.token_length", fake_token_length)
 
     processor = MarkdownProcessor(
         Mock(),
@@ -72,14 +78,17 @@ def test_chunk_merges_undersized_chunks() -> None:
     chunks = processor.chunk(text)
 
     assert chunks
-    assert all(_token_length(c.content) <= 120 for c in chunks)
+    assert all(fake_token_length(c.content) <= 120 for c in chunks)
     for chunk in chunks[:-1]:
-        assert _token_length(chunk.content) >= 60
+        assert fake_token_length(chunk.content) >= 60
     assert len(chunks) < 3
 
 
-def test_chunk_leaves_short_tail_when_merge_exceeds_max() -> None:
-    from app.rag.processor import _token_length
+def test_chunk_leaves_short_tail_when_merge_exceeds_max(monkeypatch) -> None:
+    def fake_token_length(text: str) -> int:
+        return len(text.encode("utf-8"))
+
+    monkeypatch.setattr("app.rag.processor.token_length", fake_token_length)
 
     processor = MarkdownProcessor(
         Mock(),
@@ -93,6 +102,6 @@ def test_chunk_leaves_short_tail_when_merge_exceeds_max() -> None:
     chunks = processor.chunk(text)
 
     assert len(chunks) == 2
-    assert _token_length(chunks[0].content) <= 50
-    assert _token_length(chunks[1].content) < 40
-    assert all(_token_length(c.content) <= 50 for c in chunks)
+    assert fake_token_length(chunks[0].content) <= 50
+    assert fake_token_length(chunks[1].content) < 40
+    assert all(fake_token_length(c.content) <= 50 for c in chunks)

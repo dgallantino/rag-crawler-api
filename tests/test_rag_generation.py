@@ -9,18 +9,15 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from app.models import DocumentChunk
+from app.rag.chunks import ScoredChunk
 from app.rag.generation import (
     MergedChunk,
-    ScoredChunk,
     _strip_leading_overlap,
     answer_with_retrieval,
     build_context,
     generate_answer,
     merge_adjacent_chunks,
-    normalize_chunks,
 )
-from app.rag.retrieval import RetrievedChunk
-from tests.rag_helpers import _make_chunk
 
 
 def fake_completion_client(answer: str = "Mock answer") -> MagicMock:
@@ -31,10 +28,6 @@ def fake_completion_client(answer: str = "Mock answer") -> MagicMock:
 
     mock.chat.completions.create = create
     return mock
-
-
-def _retrieved(chunk: DocumentChunk, similarity_score: float = 0.9) -> RetrievedChunk:
-    return RetrievedChunk(chunk=chunk, similarity_score=similarity_score)
 
 
 def _scored(chunk: DocumentChunk, score: float = 0.9) -> ScoredChunk:
@@ -54,20 +47,6 @@ def _mock_chunk(
     chunk.chunk_index = chunk_index
     chunk.content = content
     return chunk
-
-
-# --- generation.py: normalize_chunks ---
-
-
-def test_normalize_chunks_from_retrieved(db_session, test_collection):
-    chunk = _make_chunk(db_session, test_collection, content="body")
-    retrieved = [_retrieved(chunk, 0.75)]
-
-    normalized = normalize_chunks(retrieved)
-
-    assert len(normalized) == 1
-    assert normalized[0].chunk.id == chunk.id
-    assert normalized[0].score == 0.75
 
 
 # --- generation.py: merge_adjacent_chunks / overlap ---
@@ -381,7 +360,7 @@ def test_build_context_deduplicates_content():
 
 def test_build_context_respects_max_tokens(monkeypatch):
     monkeypatch.setattr(
-        "app.rag.generation._token_length",
+        "app.rag.generation.token_length",
         lambda text: len(text),
     )
     chunks = []

@@ -16,7 +16,7 @@ from app.rag.retrieval import (
     _apply_filters,
     _distance_to_score,
     embed_query,
-    retrieve,
+    _retrieve,
     vector_search,
 )
 from tests.rag_helpers import _make_chunk, _vec
@@ -249,8 +249,9 @@ def test_vector_search_maps_distance_to_similarity_score(
 
     assert len(results) == 2
     assert results[0].chunk.id == closer.id
-    assert results[0].similarity_score == pytest.approx(1.0, abs=1e-5)
-    assert results[1].similarity_score < results[0].similarity_score
+    assert results[0].score == pytest.approx(1.0, abs=1e-5)
+    assert results[0].retrieval_score == results[0].score
+    assert results[1].score < results[0].score
 
 
 def test_vector_search_respects_top_k(db_session, test_collection):
@@ -425,7 +426,7 @@ def test_retrieve_embeds_and_searches(db_session, test_collection):
         chunk_vector=_vec(1.0),
     )
 
-    results = retrieve(
+    results = _retrieve(
         query="Which chunk?",
         top_k=2,
         filters=None,
@@ -436,4 +437,5 @@ def test_retrieve_embeds_and_searches(db_session, test_collection):
 
     assert len(results) == 1
     assert results[0].chunk.id == chunk.id
-    assert results[0].similarity_score > 0.0
+    assert results[0].score > 0.0
+    assert results[0].retrieval_score == results[0].score

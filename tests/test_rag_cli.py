@@ -7,8 +7,8 @@ import json
 from unittest.mock import MagicMock, patch
 
 from app.cli import cmd_query, cmd_retrieve
+from app.rag.chunks import ScoredChunk
 from app.rag.generation import RagResponse
-from app.rag.retrieval import RetrievedChunk
 from app.services.collections import create_collection
 from app.services.system_user import create_system_user
 
@@ -25,7 +25,7 @@ def test_cli_retrieve(mock_retrieval, mock_answer, db_session, monkeypatch, caps
     chunk.content = "Enterprise SLA is 99.9% uptime"
     chunk.chunk_metadata = {"section_header": "SLA"}
     chunk.document = MagicMock(title="sla.md", url="file://sla.md")
-    mock_retrieval.return_value = [RetrievedChunk(chunk=chunk, similarity_score=0.91)]
+    mock_retrieval.return_value = [ScoredChunk(chunk=chunk, score=0.91, retrieval_score=0.91)]
 
     args = argparse.Namespace(
         query="What is the SLA?",
@@ -65,7 +65,7 @@ def test_cli_query(mock_retrieval, mock_answer, db_session, monkeypatch, capsys)
     create_collection(db_session, user, name="Dev Docs", slug="dev-docs")
 
     chunk = MagicMock()
-    candidates = [RetrievedChunk(chunk=chunk, similarity_score=0.9)]
+    candidates = [ScoredChunk(chunk=chunk, score=0.9, retrieval_score=0.9)]
     mock_retrieval.return_value = candidates
     mock_answer.return_value = RagResponse(
         answer="Enterprise SLA is 99.9% uptime",

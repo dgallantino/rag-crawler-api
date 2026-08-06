@@ -5,13 +5,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from uuid import UUID
 
-import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentChunk
 from app.rag.events import DocumentStatusEvent, DocumentStatusHandler
+from app.rag.tokens import token_length
 from app.utils import build_contextualized_embedding_text
 
 BATCH_SIZE = 100
@@ -20,54 +20,11 @@ HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 TAGS_PATTERN = re.compile(r"^tags:\s*\[(.*?)\]", re.MULTILINE)
 
-_encoding: tiktoken.Encoding | None = None
-
 
 @dataclass(frozen=True)
 class ChunkResult:
     content: str
     metadata: dict
-
-
-def _get_encoding() -> tiktoken.Encoding:
-    global _encoding
-    if _encoding is None:
-        _encoding = tiktoken.get_encoding("cl100k_base")
-    return _encoding
-
-
-def _token_length(text: str) -> int:
-    return len(_get_encoding().encode(text))
-
-
-def _extract_frontmatter_tags(text: str) -> list[str]:
-    match = FRONTMATTER_PATTERN.match(text)
-    if not match:
-        return []
-
-    frontmatter = match.group(1)
-    tags_match = TAGS_PATTERN.search(frontmatter)
-    if not tags_match:
-        return []
-
-    return [tag.strip().strip("'\"") for tag in tags_match.group(1).split(",") if tag.strip()]
-
-
-def _build_heading_index(text: str) -> list[tuple[int, str]]:
-    headings: list[tuple[int, str]] = []
-    for match in HEADING_PATTERN.finditer(text):
-        headings.append((match.start(), match.group(2).strip()))
-    return headings
-
-
-def _nearest_heading(position: int, headings: list[tuple[int, str]]) -> str | None:
-    current: str | None = None
-    for heading_pos, heading_text in headings:
-        if heading_pos <= position:
-            current = heading_text
-        else:
-            break
-    return current
 
 
 class DocumentProcessor(ABC):
@@ -158,33 +115,6 @@ class DocumentProcessor(ABC):
             raise
 
 
-def _merge_undersized_chunks(
-    chunks: list[str],
-    *,
-    chunk_min_tokens: int,
-    chunk_max_tokens: int,
-) -> list[str]:
-    """Merge consecutive undersized chunks up to chunk_max_tokens.
-
-    Leaves a short final (or leftover) chunk when merging would exceed max.
-    """
-    if not chunks:
-        return []
-
-    merged: list[str] = [chunks[0]]
-    for chunk in chunks[1:]:
-        if _token_length(chunk) >= chunk_min_tokens:
-            merged.append(chunk)
-            continue
-
-        combined = merged[-1] + "\n\n" + chunk
-        if _token_length(combined) <= chunk_max_tokens:
-            merged[-1] = combined
-        else:
-            merged.append(chunk)
-    return merged
-
-
 class MarkdownProcessor(DocumentProcessor):
     def __init__(
         self,
@@ -200,23 +130,70 @@ class MarkdownProcessor(DocumentProcessor):
         self._chunk_min_tokens = chunk_min_tokens
         self._chunk_overlap_percent = chunk_overlap_percent
 
+    @staticmethod
+    def _extract_frontmatter_tags(text: str) -> list[str]:
+        match = FRONTMATTER_PATTERN.match(text)
+        if not match:
+            return []
+
+        frontmatter = match.group(1)
+        tags_match = TAGS_PATTERN.search(frontmatter)
+        if not tags_match:
+            return []
+
+        return [tag.strip().strip("'\"") for tag in tags_match.group(1).split(",") if tag.strip()]
+
+    @staticmethod
+    def _build_heading_index(text: str) -> list[tuple[int, str]]:
+        headings: list[tuple[int, str]] = []
+        for match in HEADING_PATTERN.finditer(text):
+            headings.append((match.start(), match.group(2).strip()))
+        return headings
+
+    @staticmethod
+    def _nearest_heading(position: int, headings: list[tuple[int, str]]) -> str | None:
+        current: str | None = None
+        for heading_pos, heading_text in headings:
+            if heading_pos <= position:
+                current = heading_text
+            else:
+                break
+        return current
+
+    def _merge_undersized_chunks(self, chunks: list[str]) -> list[str]:
+        """Merge consecutive undersized chunks up to chunk_max_tokens.
+
+        Leaves a short final (or leftover) chunk when merging would exceed max.
+        """
+        if not chunks:
+            return []
+
+        merged: list[str] = [chunks[0]]
+        for chunk in chunks[1:]:
+            if token_length(chunk) >= self._chunk_min_tokens:
+                merged.append(chunk)
+                continue
+
+            combined = merged[-1] + "\n\n" + chunk
+            if token_length(combined) <= self._chunk_max_tokens:
+                merged[-1] = combined
+            else:
+                merged.append(chunk)
+        return merged
+
     def chunk(self, content: str) -> list[ChunkResult]:
         overlap = int(self._chunk_max_tokens * self._chunk_overlap_percent / 100)
 
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=self._chunk_max_tokens,
             chunk_overlap=overlap,
-            length_function=_token_length,
+            length_function=token_length,
             separators=["\n## ", "\n### ", "\n#### ", "\n\n", "\n", " "],
         )
 
-        tags = _extract_frontmatter_tags(content)
-        headings = _build_heading_index(content)
-        chunks = _merge_undersized_chunks(
-            splitter.split_text(content),
-            chunk_min_tokens=self._chunk_min_tokens,
-            chunk_max_tokens=self._chunk_max_tokens,
-        )
+        tags = self._extract_frontmatter_tags(content)
+        headings = self._build_heading_index(content)
+        chunks = self._merge_undersized_chunks(splitter.split_text(content))
 
         results: list[ChunkResult] = []
         search_from = 0
@@ -231,7 +208,7 @@ class MarkdownProcessor(DocumentProcessor):
             search_from = position + len(chunk.split("\n\n", 1)[0])
 
             metadata: dict = {}
-            section_header = _nearest_heading(position, headings)
+            section_header = self._nearest_heading(position, headings)
             if section_header:
                 metadata["section_header"] = section_header
             chunk_headings = [

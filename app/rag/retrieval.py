@@ -1,14 +1,15 @@
 """Hybrid retrieval over DocumentChunk (dense + Postgres FTS + RRF).
 
 Responsible for turning a query into a ranked list of candidate chunks
-from Postgres/pgvector and full-text search. Does not call any LLMs and
-does not know about answer generation — see rerank.py and generation.py
-for those. Optional Cohere rerank still happens in the service layer.
+from Postgres/pgvector and full-text search, with optional reranking
+orchestrated by ``Retriever``. Does not call any LLMs and does not know
+about answer generation — see generation.py for that. The embedding and
+rerank providers are injected by the service layer.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
 from datetime import date, datetime, time
 from typing import Callable
 from uuid import UUID
@@ -18,21 +19,15 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import DocumentChunk
+from app.rag.chunks import ScoredChunk
 
+logger = logging.getLogger(__name__)
 
 EmbedFn = Callable[[str], list[float]]
 
-
-@dataclass
-class RetrievedChunk:
-    """A DocumentChunk plus its retrieval-stage score.
-
-    For vector-only search the score is cosine similarity in ``[0, 1]``.
-    For hybrid search it is the RRF fusion score (relative rank only).
-    """
-
-    chunk: DocumentChunk
-    similarity_score: float
+# Contract for the service-layer rerank provider:
+# (query, top_k, candidates) -> reranked chunks with rerank_score set.
+RerankServiceFn = Callable[[str, int, list[ScoredChunk]], list[ScoredChunk]]
 
 
 def embed_query(query: str, embed_fn: EmbedFn) -> list[float]:
@@ -48,8 +43,9 @@ def embed_query(query: str, embed_fn: EmbedFn) -> list[float]:
 def _apply_hnsw_session_settings(session: Session, *, top_k: int) -> None:
     """Set LOCAL pgvector HNSW GUCs for the current transaction.
 
-    ef_search scales with top_k so rerank over-fetch (top_k * 4 from the
-    service layer) naturally requests a wider ANN candidate pool.
+    ef_search scales with top_k so rerank over-fetch (top_k *
+    rerank_expansion_factor in Retriever) naturally requests a wider ANN
+    candidate pool.
 
     PostgreSQL SET does not accept bind parameters, so values are inlined
     after validation.
@@ -73,7 +69,7 @@ def vector_search(
     top_k: int,
     filters: dict | None,
     collection: list[str],
-) -> list[RetrievedChunk]:
+) -> list[ScoredChunk]:
     """Run a pgvector similarity search and return the top_k chunks.
 
     ``collection`` is one or more collection UUIDs resolved by the service
@@ -97,7 +93,11 @@ def vector_search(
 
     rows = session.execute(stmt).all()
     return [
-        RetrievedChunk(chunk=row[0], similarity_score=_distance_to_score(row[1]))
+        ScoredChunk(
+            chunk=row[0],
+            score=_distance_to_score(row[1]),
+            retrieval_score=_distance_to_score(row[1]),
+        )
         for row in rows
     ]
 
@@ -124,7 +124,7 @@ def fts_search(
     top_k: int,
     filters: dict | None,
     collection: list[str],
-) -> list[RetrievedChunk]:
+) -> list[ScoredChunk]:
     """Run Postgres FTS over chunk content and return the top_k chunks.
 
     Uses the ``simple`` text search config (no English stemming) so Indonesian
@@ -147,17 +147,21 @@ def fts_search(
 
     rows = session.execute(stmt).all()
     return [
-        RetrievedChunk(chunk=row[0], similarity_score=float(row[1] or 0.0))
+        ScoredChunk(
+            chunk=row[0],
+            score=float(row[1] or 0.0),
+            retrieval_score=float(row[1] or 0.0),
+        )
         for row in rows
     ]
 
 
 def rrf_fuse(
-    ranked_lists: list[list[RetrievedChunk]],
+    ranked_lists: list[list[ScoredChunk]],
     *,
     k: int = 60,
     top_k: int,
-) -> list[RetrievedChunk]:
+) -> list[ScoredChunk]:
     """Merge ranked retrieval lists with Reciprocal Rank Fusion.
 
     ``RRF(d) = sum_i 1 / (k + rank_i(d))`` with 1-based ranks. Chunks present
@@ -175,7 +179,7 @@ def rrf_fuse(
 
     ordered = sorted(scores.items(), key=lambda kv: (-kv[1], str(kv[0])))
     return [
-        RetrievedChunk(chunk=chunks[chunk_id], similarity_score=score)
+        ScoredChunk(chunk=chunks[chunk_id], score=score, retrieval_score=score)
         for chunk_id, score in ordered[:top_k]
     ]
 
@@ -207,7 +211,6 @@ def _apply_filters(stmt, filters: dict):
                 before = datetime.combine(before, time.max)
             stmt = stmt.where(DocumentChunk.created_at <= before)
 
-
     return stmt
 
 
@@ -219,7 +222,7 @@ def _distance_to_score(distance: float) -> float:
     return max(0.0, min(1.0, 1.0 - distance))
 
 
-def retrieve(
+def _retrieve(
     query: str,
     top_k: int,
     filters: dict | None,
@@ -227,12 +230,12 @@ def retrieve(
     *,
     session: Session,
     embed_fn: EmbedFn,
-) -> list[RetrievedChunk]:
+) -> list[ScoredChunk]:
     """Embed the query and return hybrid (or vector-only) candidates.
 
-    When ``hybrid_search_enabled`` is true, runs dense + FTS legs in parallel
+    When ``hybrid_search_enabled`` is true, runs dense + FTS legs
     (each fetching ``top_k * hybrid_candidate_multiplier``) and fuses with RRF.
-    When disabled, preserves the previous vector-only path.
+    When disabled, preserves the vector-only path.
     """
     settings = get_settings()
     query_vector = embed_query(query, embed_fn)
@@ -266,3 +269,72 @@ def retrieve(
         k=settings.rrf_k,
         top_k=top_k,
     )
+
+
+class Retriever:
+    """Orchestrates hybrid retrieval and optional reranking.
+
+    Holds the injected embedding/rerank providers plus the rerank over-fetch
+    policy, so it can be constructed once (per process) by the service layer.
+    The DB session is per-request state and is always passed per call.
+    """
+
+    def __init__(
+        self,
+        *,
+        embed_fn: EmbedFn,
+        rerank_fn: RerankServiceFn | None = None,
+        rerank_expansion_factor: int = 4,
+    ) -> None:
+        self._embed_fn = embed_fn
+        self._rerank_fn = rerank_fn
+        self._rerank_expansion_factor = rerank_expansion_factor
+
+    def retrieve(
+        self,
+        query: str,
+        top_k: int,
+        filters: dict | None,
+        collection: list[str],
+        *,
+        session: Session,
+        use_rerank: bool = False,
+    ) -> list[ScoredChunk]:
+        """Retrieve top_k chunks, over-fetching then reranking when requested."""
+        initial_k = top_k * self._rerank_expansion_factor if use_rerank else top_k
+        candidates = _retrieve(
+            query,
+            initial_k,
+            filters,
+            collection,
+            session=session,
+            embed_fn=self._embed_fn,
+        )
+
+        if not use_rerank:
+            return candidates[:top_k]
+        return self._rerank(query, candidates, top_k)
+
+    def _rerank(
+        self,
+        query: str,
+        candidates: list[ScoredChunk],
+        top_k: int,
+    ) -> list[ScoredChunk]:
+        """Re-score candidates; on any failure fall back to retrieval order."""
+        if self._rerank_fn is None:
+            logger.warning(
+                "use_rerank requested but no rerank provider configured; "
+                "falling back to retrieval order"
+            )
+            return candidates[:top_k]
+
+        try:
+            reranked = self._rerank_fn(query, top_k, candidates)
+        except Exception:
+            logger.warning(
+                "Rerank failed; falling back to retrieval order", exc_info=True
+            )
+            return candidates[:top_k]
+
+        return reranked[:top_k]
