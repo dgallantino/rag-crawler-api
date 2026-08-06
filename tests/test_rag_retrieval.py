@@ -15,9 +15,9 @@ from app.models import DocumentChunk
 from app.rag.retrieval import (
     _apply_filters,
     _distance_to_score,
-    embed_query,
+    _embed_query,
     _retrieve,
-    vector_search,
+    _vector_search,
 )
 from tests.rag_helpers import _make_chunk, _vec
 
@@ -239,7 +239,7 @@ def test_vector_search_maps_distance_to_similarity_score(
         chunk_vector=_vec(0.0, 1.0),
     )
 
-    results = vector_search(
+    results = _vector_search(
         db_session,
         _vec(1.0),
         top_k=2,
@@ -264,7 +264,7 @@ def test_vector_search_respects_top_k(db_session, test_collection):
             chunk_vector=_vec(1.0 - index * 0.1),
         )
 
-    results = vector_search(
+    results = _vector_search(
         db_session,
         _vec(1.0),
         top_k=2,
@@ -297,7 +297,7 @@ def test_vector_search_scopes_by_collection(
         chunk_vector=_vec(1.0),
     )
 
-    results = vector_search(
+    results = _vector_search(
         db_session,
         _vec(1.0),
         top_k=5,
@@ -331,7 +331,7 @@ def test_vector_search_accepts_multiple_collections(
         chunk_vector=_vec(0.9),
     )
 
-    results = vector_search(
+    results = _vector_search(
         db_session,
         _vec(1.0),
         top_k=5,
@@ -353,7 +353,7 @@ def test_vector_search_applies_filters(db_session, test_collection, monkeypatch)
     monkeypatch.setattr("app.rag.retrieval._apply_filters", spy)
 
     filters = {"metadata": {"doc_type": "contract"}}
-    vector_search(
+    _vector_search(
         db_session,
         _vec(1.0),
         top_k=5,
@@ -380,7 +380,7 @@ def test_vector_search_with_metadata_filter(db_session, test_collection):
         chunk_vector=_vec(1.0),
     )
 
-    results = vector_search(
+    results = _vector_search(
         db_session,
         _vec(1.0),
         top_k=5,
@@ -393,7 +393,7 @@ def test_vector_search_with_metadata_filter(db_session, test_collection):
 
 
 def test_vector_search_returns_empty_when_no_rows(db_session):
-    results = vector_search(
+    results = _vector_search(
         db_session,
         [0.0] * 1536,
         top_k=5,
@@ -414,7 +414,7 @@ def test_embed_query_delegates_to_embed_fn():
         called_with.append(text)
         return [1.0, 2.0]
 
-    assert embed_query("hello", embed_fn) == [1.0, 2.0]
+    assert _embed_query("hello", embed_fn) == [1.0, 2.0]
     assert called_with == ["hello"]
 
 
