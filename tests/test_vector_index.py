@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.models import Document, DocumentChunk
-from app.rag.retrieval import vector_search
+from app.rag.retrieval import _vector_search
 from tests.rag_helpers import _random_unit_vector, _vec, bulk_make_chunks
 
 
@@ -98,7 +98,7 @@ def test_vector_search_scopes_to_collection_with_similar_vectors(
         chunk_vector=_vec(1.0),
     )
 
-    results = vector_search(
+    results = _vector_search(
         db_session,
         _vec(1.0),
         top_k=5,
@@ -158,7 +158,7 @@ def _brute_force_ids(
     """Exact top-k by disabling index scans in this transaction."""
     db_session.execute(text("SET LOCAL enable_indexscan = off"))
     db_session.execute(text("SET LOCAL enable_bitmapscan = off"))
-    results = vector_search(
+    results = _vector_search(
         db_session,
         query_vector,
         top_k=top_k,
@@ -202,7 +202,7 @@ def test_hnsw_recall_vs_brute_force(db_session, test_collection, high_ef_search)
             collection_id=str(test_collection.id),
             top_k=top_k,
         )
-        ann = vector_search(
+        ann = _vector_search(
             db_session,
             query,
             top_k=top_k,
@@ -242,7 +242,7 @@ def test_hnsw_filtered_recall(db_session, test_collection, high_ef_search) -> No
             top_k=top_k,
             filters=filters,
         )
-        ann = vector_search(
+        ann = _vector_search(
             db_session,
             query,
             top_k=top_k,

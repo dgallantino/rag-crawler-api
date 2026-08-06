@@ -30,7 +30,7 @@ EmbedFn = Callable[[str], list[float]]
 RerankServiceFn = Callable[[str, int, list[ScoredChunk]], list[ScoredChunk]]
 
 
-def embed_query(query: str, embed_fn: EmbedFn) -> list[float]:
+def _embed_query(query: str, embed_fn: EmbedFn) -> list[float]:
     """Embed the query string.
 
     embed_fn is supplied by the service layer (the embedding model is
@@ -62,7 +62,7 @@ def _apply_hnsw_session_settings(session: Session, *, top_k: int) -> None:
     session.execute(text(f"SET LOCAL hnsw.max_scan_tuples = {max_scan_tuples}"))
 
 
-def vector_search(
+def _vector_search(
     session: Session,
     query_vector: list[float],
     *,
@@ -117,7 +117,7 @@ def _build_tsquery(session: Session, query: str):
     return func.plainto_tsquery("simple", query)
 
 
-def fts_search(
+def _fts_search(
     session: Session,
     query: str,
     *,
@@ -156,7 +156,7 @@ def fts_search(
     ]
 
 
-def rrf_fuse(
+def _rrf_fuse(
     ranked_lists: list[list[ScoredChunk]],
     *,
     k: int = 60,
@@ -238,10 +238,10 @@ def _retrieve(
     When disabled, preserves the vector-only path.
     """
     settings = get_settings()
-    query_vector = embed_query(query, embed_fn)
+    query_vector = _embed_query(query, embed_fn)
 
     if not settings.hybrid_search_enabled:
-        return vector_search(
+        return _vector_search(
             session,
             query_vector,
             top_k=top_k,
@@ -250,21 +250,21 @@ def _retrieve(
         )
 
     candidate_k = top_k * settings.hybrid_candidate_multiplier
-    dense = vector_search(
+    dense = _vector_search(
         session,
         query_vector,
         top_k=candidate_k,
         filters=filters,
         collection=collection,
     )
-    lexical = fts_search(
+    lexical = _fts_search(
         session,
         query,
         top_k=candidate_k,
         filters=filters,
         collection=collection,
     )
-    return rrf_fuse(
+    return _rrf_fuse(
         [dense, lexical],
         k=settings.rrf_k,
         top_k=top_k,

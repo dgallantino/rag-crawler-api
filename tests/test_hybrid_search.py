@@ -16,9 +16,9 @@ from app.config import get_settings
 from app.models import DocumentChunk
 from app.rag.chunks import ScoredChunk
 from app.rag.retrieval import (
-    fts_search,
+    _fts_search,
     _retrieve,
-    rrf_fuse,
+    _rrf_fuse,
 )
 from tests.rag_helpers import _make_chunk, _vec
 
@@ -87,7 +87,7 @@ def test_fts_search_ranks_exact_token_above_unrelated(
         chunk_index=1,
     )
 
-    results = fts_search(
+    results = _fts_search(
         db_session,
         "ZX9Q7-TOKEN",
         top_k=5,
@@ -121,7 +121,7 @@ def test_fts_search_scopes_by_collection(
         chunk_vector=_vec(1.0),
     )
 
-    results = fts_search(
+    results = _fts_search(
         db_session,
         "shared-rare-token",
         top_k=5,
@@ -164,7 +164,7 @@ def test_fts_search_applies_metadata_and_date_filters(
         chunk_index=2,
     )
 
-    results = fts_search(
+    results = _fts_search(
         db_session,
         "ZXFTS1",
         top_k=5,
@@ -193,7 +193,7 @@ def test_rrf_fuse_prefers_dual_high_ranks_and_keeps_singletons() -> None:
         ScoredChunk(chunk=c, score=0.6, retrieval_score=0.6),
     ]
 
-    fused = rrf_fuse([dense, lexical], k=60, top_k=3)
+    fused = _rrf_fuse([dense, lexical], k=60, top_k=3)
 
     assert fused[0].chunk.id == a.id
     assert {fused[1].chunk.id, fused[2].chunk.id} == {b.id, c.id}
@@ -214,7 +214,7 @@ def test_rrf_fuse_stable_tie_break_by_chunk_id() -> None:
         id=second_id, content="y", chunk_index=1, chunk_vector=[0.0]
     )
 
-    fused = rrf_fuse(
+    fused = _rrf_fuse(
         [
             [ScoredChunk(chunk=chunk_first, score=1.0, retrieval_score=1.0)],
             [ScoredChunk(chunk=chunk_second, score=1.0, retrieval_score=1.0)],
