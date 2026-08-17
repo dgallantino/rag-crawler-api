@@ -67,11 +67,13 @@ class DocumentProcessor(ABC):
         try:
             document.status = "processing"
             document.error_message = None
-            db.commit()
 
             on_status(DocumentStatusEvent(document_id, "chunking", "in_progress"))
             chunks = self.chunk(document.content or "")
             on_status(DocumentStatusEvent(document_id, "chunking", "completed"))
+
+            if not chunks:
+                raise ValueError("Document produced zero chunks after chunking")
 
             on_status(DocumentStatusEvent(document_id, "embedding", "in_progress"))
             embed_inputs = [
