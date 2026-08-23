@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.schemas.query import ErrorResponse
+from app.schemas.common import ErrorResponse
 
 
 class ForbiddenError(Exception):
@@ -24,6 +25,14 @@ class NotFoundError(Exception):
         self.message = message
 
 
+class ConflictError(Exception):
+    """Raised when a create/update would violate uniqueness (→ 409)."""
+
+    def __init__(self, message: str = "Resource already exists") -> None:
+        super().__init__(message)
+        self.message = message
+
+
 class ValidationFailedError(Exception):
     """Raised when business-level validation fails beyond schema (→ 422)."""
 
@@ -32,8 +41,25 @@ class ValidationFailedError(Exception):
         self.message = message
 
 
+class NotImplementedAPIError(Exception):
+    """Raised by stub routes that are not yet wired (→ 501)."""
+
+    def __init__(self, message: str = "Not implemented") -> None:
+        super().__init__(message)
+        self.message = message
+
+
 def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
+
+
+def _format_validation_errors(exc: RequestValidationError) -> str:
+    parts: list[str] = []
+    for err in exc.errors():
+        loc = ".".join(str(item) for item in err.get("loc", ()) if item != "body")
+        msg = err.get("msg", "invalid")
+        parts.append(f"{loc}: {msg}" if loc else msg)
+    return "; ".join(parts) or "Validation failed"
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -61,12 +87,49 @@ def register_exception_handlers(app: FastAPI) -> None:
             ).model_dump(),
         )
 
+    @app.exception_handler(ConflictError)
+    async def handle_conflict(request: Request, exc: ConflictError) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content=ErrorResponse(
+                error="conflict",
+                message=exc.message,
+                request_id=_request_id(request),
+            ).model_dump(),
+        )
+
     @app.exception_handler(ValidationFailedError)
     async def handle_validation(request: Request, exc: ValidationFailedError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
             content=ErrorResponse(
                 error="validation_error",
+                message=exc.message,
+                request_id=_request_id(request),
+            ).model_dump(),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content=ErrorResponse(
+                error="validation_error",
+                message=_format_validation_errors(exc),
+                request_id=_request_id(request),
+            ).model_dump(),
+        )
+
+    @app.exception_handler(NotImplementedAPIError)
+    async def handle_not_implemented(
+        request: Request, exc: NotImplementedAPIError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            content=ErrorResponse(
+                error="not_implemented",
                 message=exc.message,
                 request_id=_request_id(request),
             ).model_dump(),

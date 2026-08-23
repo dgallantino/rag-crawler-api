@@ -1,7 +1,7 @@
 """Shared helpers for temporarily disabled API routes."""
 
-from fastapi import HTTPException, status
+from app.exceptions import NotImplementedAPIError
 
 
 def raise_not_implemented(detail: str = "Not implemented") -> None:
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=detail)
+    raise NotImplementedAPIError(detail)

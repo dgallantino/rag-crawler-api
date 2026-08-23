@@ -165,7 +165,7 @@ def test_apply_filters_date_only_expands_to_day_bounds(db_session, test_collecti
     assert rows[0].id == on_day.id
 
 
-def test_apply_filters_owner_ref_skipped(db_session, test_collection):
+def test_apply_filters_unknown_keys_ignored(db_session, test_collection):
     chunk = _make_chunk(db_session, test_collection, content="owned")
     stmt = select(DocumentChunk)
     stmt = _apply_filters(stmt, {"owner_ref": "user-123"})

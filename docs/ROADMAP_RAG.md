@@ -6,9 +6,9 @@
 
 ## 0. Snapshot
 
-**Verdict:** Library-level RAG works end-to-end via CLI and Celery (chunk → embed → pgvector → optional Cohere rerank → LLM answer). Public HTTP routes for query, agent search, documents, and collections are stubbed (501). README Planned Work item 3 (“implement RAG pipeline”) is obsolete.
+**Verdict:** Library-level RAG works end-to-end via CLI and Celery (chunk → embed → pgvector → optional Cohere rerank → LLM answer). Public HTTP routes for retrieve, query, documents, and collections are stubbed (501). README Planned Work item 3 (“implement RAG pipeline”) is obsolete.
 
-**Scope:** `app/rag/*`, `app/services/rag.py`, `app/services/documents.py`, `app/services/collections.py`, query/agent/document schemas and routes, related tests.
+**Scope:** `app/rag/*`, `app/services/rag.py`, `app/services/documents.py`, `app/services/collections.py`, query/document schemas and routes, related tests.
 
 **Present today:**
 
@@ -54,11 +54,7 @@ Prioritized additions for this stack:
 
 ### C1 — Contract freeze
 
-- Align `/v1/query` response: route declares `RagResponse` (`answer` + `sources`) while schemas also define unused `RetrievalResult` / `AgentRetrievalResult`.
-- Restore missing `tmp-RAG-query-expected-shape.yaml` (referenced by `app/schemas/query.py`) or replace with a checked-in OpenAPI snippet.
-- Clarify backend vs agent auth model in the contract: body `user_id` (trusted caller) vs server-resolved tenant for `/v1/agent/search`.
-- Normalize error envelope: stubs and Pydantic 422 use FastAPI `detail`; custom handlers use `ErrorResponse`.
-- Add `extra="forbid"` on `CollectionCreateRequest` for consistency with query/document schemas.
+Done. Live OpenAPI is FastAPI `/docs` (no checked-in yaml). Tenant is the authenticated `SystemUser` (API key; D1 wires `Depends`) — request bodies have no `user_id`. Retrieve-only is `POST /v1/retrieve` (`RetrievalResult`); `POST /v1/query` returns `RagResponse`. `/v1/agent/search` removed. Errors use `ErrorResponse` (`error`, `message`, `request_id`) including Pydantic 422, 409 conflict, and 501 stubs.
 
 ### C2 — Implementation
 
@@ -66,8 +62,8 @@ Wire thin routes → existing services, in order:
 
 1. `POST /v1/collections`
 2. `POST /v1/documents`, `POST /v1/documents/json`, `GET /v1/documents/{id}/status`
-3. `POST /v1/query`
-4. `POST /v1/agent/search`
+3. `POST /v1/retrieve`
+4. `POST /v1/query` (`retrieval_service` then `answer_service`)
 
 Add HTTP API tests (suite today is ~70 tests, almost none on routes).
 
@@ -76,8 +72,8 @@ Add HTTP API tests (suite today is ~70 tests, almost none on routes).
 ## D — Security (RAG-facing)
 
 1. Wire API-key auth (`app/auth.py` + `SystemUser`) via FastAPI `Depends` **before** enabling query/upload routes.
-2. Do not trust body `user_id` without an auth gate (or ignore body identity when the key maps to a tenant).
-3. Rate limiting on `/v1/query` and `/v1/agent/search` using `SystemUser.ratelimit`.
+2. Do not add body `user_id`; tenant comes from the authenticated system user.
+3. Rate limiting on `/v1/retrieve` and `/v1/query` using `SystemUser.ratelimit`.
 4. Bound caller-controlled metadata filter keys/values; treat prompt injection into retrieved context as an inherent RAG risk (grounded prompts help but do not eliminate it).
 
 ---
@@ -98,7 +94,7 @@ Add HTTP API tests (suite today is ~70 tests, almost none on routes).
 |------|--------|
 | **M1** | Tenant/collection scoping + `max_tokens_context` + `chunk_min_tokens` |
 | **M2** | HNSW, hybrid search, contextual embeddings, adjacent-chunk merge |
-| **M3** | Freeze query/agent/document contracts + OpenAPI artifact |
-| **M4** | Wire collections → documents → query → agent + API tests |
+| **M3** | Freeze retrieve/query/document contracts (OpenAPI from FastAPI `/docs`) |
+| **M4** | Wire collections → documents → retrieve → query + API tests |
 | **M5** | Auth, rate limits, filter bounds |
 | **M6** | Docs, deps, Alembic, eval harness chores |
