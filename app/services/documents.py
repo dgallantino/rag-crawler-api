@@ -6,9 +6,10 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Collection, Document, SystemUser
+from app.models import Collection, Document, DocumentChunk, SystemUser
 from app.schemas.documents import DocumentStatusResponse
 from app.services import job_status
+from app.services.collections import get_collection, get_collection_by_slug
 from app.services.triggers import trigger_process_document
 
 
@@ -41,6 +42,10 @@ class DocumentConflictError(Exception):
 
 
 class DocumentNotFoundError(Exception):
+    pass
+
+
+class DocumentValidationError(Exception):
     pass
 
 
@@ -92,6 +97,101 @@ def create_document_upload(
     return document
 
 
+def get_document(db: Session, user: SystemUser, document_id: UUID) -> Document:
+    """Fetch a document by ID, scoped to the given user.
+
+    Raises:
+        DocumentNotFoundError: If the document does not exist for the given user.
+    """
+    document = (
+        db.query(Document)
+        .join(Collection, Document.collection_id == Collection.id)
+        .filter(Document.id == document_id, Collection.system_user_id == user.id)
+        .one_or_none()
+    )
+    if document is None:
+        raise DocumentNotFoundError(str(document_id))
+    return document
+
+
+def list_documents(
+    db: Session,
+    user: SystemUser,
+    collection_id: UUID | None = None,
+    collection_slug: str | None = None,
+) -> list[Document]:
+    """Return documents owned by ``user``, optionally filtered by collection.
+
+    Empty list is OK. Both ``collection_id`` and ``collection_slug`` is invalid.
+
+    Raises:
+        ValueError: If both collection identifiers are set.
+        CollectionNotFoundError: If the requested collection does not exist for the user.
+    """
+    if collection_id is not None and collection_slug is not None:
+        raise ValueError("Provide at most one of collection_id or collection_slug")
+
+    query = (
+        db.query(Document)
+        .join(Collection, Document.collection_id == Collection.id)
+        .filter(Collection.system_user_id == user.id)
+    )
+    if collection_id is not None:
+        collection = get_collection(db, user, collection_id)
+        query = query.filter(Document.collection_id == collection.id)
+    elif collection_slug is not None:
+        collection = get_collection_by_slug(db, user, collection_slug)[0]
+        query = query.filter(Document.collection_id == collection.id)
+    return query.all()
+
+
+def update_document(
+    db: Session,
+    user: SystemUser,
+    document_id: UUID,
+    *,
+    title: str | None = None,
+    content: str | None = None,
+) -> Document:
+    """Update title and/or content on a document owned by ``user``.
+
+    Content changes reset ``status`` and ``error_message`` like a new upload.
+    Title or content changes re-queue ``process_document``.
+
+    Raises:
+        DocumentNotFoundError: If the document does not exist for the given user.
+        DocumentValidationError: If content fails markdown upload validation.
+    """
+    document = get_document(db, user, document_id)
+    if content is not None:
+        validation = validate_markdown_upload("update.md", content.encode("utf-8"))
+        if not validation.valid:
+            raise DocumentValidationError(validation.reason or "Invalid content")
+        document.content = content
+        document.status = None
+        document.error_message = None
+    if title is not None:
+        document.title = title
+    db.commit()
+    db.refresh(document)
+    if title is not None or content is not None:
+        trigger_process_document(str(document.id))
+    return document
+
+
+def delete_document(db: Session, user: SystemUser, document_id: UUID) -> None:
+    """Delete a document owned by ``user``, including its chunks and job status.
+
+    Raises:
+        DocumentNotFoundError: If the document does not exist for the given user.
+    """
+    document = get_document(db, user, document_id)
+    db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
+    db.delete(document)
+    db.commit()
+    job_status.delete_job_status(str(document_id))
+
+
 def get_document_status(
     db: Session,
     user: SystemUser,
@@ -115,14 +215,7 @@ def get_document_status(
     Raises:
         DocumentNotFoundError: If the document does not exist for the given user.
     """
-    document = (
-        db.query(Document)
-        .join(Collection, Document.collection_id == Collection.id)
-        .filter(Document.id == document_id, Collection.system_user_id == user.id)
-        .one_or_none()
-    )
-    if document is None:
-        raise DocumentNotFoundError(str(document_id))
+    document = get_document(db, user, document_id)
 
     redis_status = job_status.get_job_status(str(document_id))
     if redis_status:
