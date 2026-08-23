@@ -62,6 +62,10 @@ The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI r
 | `DELETE` | `/v1/collections/{id}` | — → 204 | 501 |
 | `POST` | `/v1/documents` | multipart upload → `DocumentUploadResponse` | 501 |
 | `POST` | `/v1/documents/json` | `DocumentUploadRequest` → `DocumentUploadResponse` | 501 |
+| `GET` | `/v1/documents` | optional collection filter → `list[DocumentListItem]` | 501 |
+| `GET` | `/v1/documents/{id}` | — → `DocumentResponse` | 501 |
+| `PATCH` | `/v1/documents/{id}` | `DocumentUpdateRequest` → `DocumentResponse` | 501 |
+| `DELETE` | `/v1/documents/{id}` | — → 204 | 501 |
 | `GET` | `/v1/documents/{id}/status` | — → `DocumentStatusResponse` | 501 |
 | `POST` | `/v1/retrieve` | `RetrieveRequest` → `RetrievalResult` | 501 |
 | `POST` | `/v1/query` | `QueryRequest` → `RagResponse` | 501 |

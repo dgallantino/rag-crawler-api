@@ -1,5 +1,6 @@
 """Pydantic schemas for document endpoints."""
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -48,6 +49,30 @@ class DocumentStatusResponse(BaseModel):
     error_message: str | None = None
 
 
-class DocumentValidationErrorResponse(BaseModel):
-    accepted: bool = False
-    reason: str = Field(description="Why the upload was rejected")
+class DocumentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=512)
+    content: str | None = Field(
+        default=None, min_length=1, description="Markdown file content (UTF-8)"
+    )
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> "DocumentUpdateRequest":
+        if self.title is None and self.content is None:
+            raise ValueError("At least one of title or content is required")
+        return self
+
+
+class DocumentListItem(BaseModel):
+    id: UUID
+    collection_id: UUID
+    title: str | None
+    url: str
+    status: str | None
+    error_message: str | None
+    created_at: datetime
+
+
+class DocumentResponse(DocumentListItem):
+    content: str | None

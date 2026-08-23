@@ -61,7 +61,7 @@ Done. Live OpenAPI is FastAPI `/docs` (no checked-in yaml). Tenant is the authen
 Wire thin routes → existing services, in order:
 
 1. `POST /v1/collections`, `GET /v1/collections`, `GET /v1/collections/{id}`, `PATCH /v1/collections/{id}`, `DELETE /v1/collections/{id}`
-2. `POST /v1/documents`, `POST /v1/documents/json`, `GET /v1/documents/{id}/status`
+2. `POST /v1/documents`, `POST /v1/documents/json`, `GET /v1/documents`, `GET /v1/documents/{id}`, `PATCH /v1/documents/{id}`, `DELETE /v1/documents/{id}`, `GET /v1/documents/{id}/status`
 3. `POST /v1/retrieve`
 4. `POST /v1/query` (`retrieval_service` then `answer_service`)
 
