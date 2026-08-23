@@ -55,7 +55,11 @@ The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI r
 | `GET` | `/` | — → `MessageResponse` | 501 |
 | `GET` | `/health` | — → `HealthResponse` | Working |
 | `GET` | `/health/db` | — → `HealthResponse` | Working |
-| `POST` | `/v1/collections` | `CollectionCreateRequest` → `CollectionCreateResponse` | 501 |
+| `POST` | `/v1/collections` | `CollectionCreateRequest` → `CollectionResponse` | 501 |
+| `GET` | `/v1/collections` | — → `list[CollectionResponse]` | 501 |
+| `GET` | `/v1/collections/{id}` | — → `CollectionResponse` | 501 |
+| `PATCH` | `/v1/collections/{id}` | `CollectionUpdateRequest` → `CollectionResponse` | 501 |
+| `DELETE` | `/v1/collections/{id}` | — → 204 | 501 |
 | `POST` | `/v1/documents` | multipart upload → `DocumentUploadResponse` | 501 |
 | `POST` | `/v1/documents/json` | `DocumentUploadRequest` → `DocumentUploadResponse` | 501 |
 | `GET` | `/v1/documents` | optional collection filter → `list[DocumentListItem]` | 501 |

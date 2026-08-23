@@ -54,13 +54,13 @@ Prioritized additions for this stack:
 
 ### C1 — Contract freeze
 
-Done. Live OpenAPI is FastAPI `/docs` (no checked-in yaml). Tenant is the authenticated `SystemUser` (API key; D1 wires `Depends`) — request bodies have no `user_id`. Retrieve-only is `POST /v1/retrieve` (`RetrievalResult`); `POST /v1/query` returns `RagResponse`. `/v1/agent/search` removed. Errors use `ErrorResponse` (`error`, `message`, `request_id`) including Pydantic 422, 409 conflict, and 501 stubs. Documents: upload, list, detail, PATCH (`title` and `content`; reindexes), status, and delete (chunks + job status).
+Done. Live OpenAPI is FastAPI `/docs` (no checked-in yaml). Tenant is the authenticated `SystemUser` (API key; D1 wires `Depends`) — request bodies have no `user_id`. Retrieve-only is `POST /v1/retrieve` (`RetrievalResult`); `POST /v1/query` returns `RagResponse`. `/v1/agent/search` removed. Errors use `ErrorResponse` (`error`, `message`, `request_id`) including Pydantic 422, 409 conflict, and 501 stubs. Collections: create, list, detail, PATCH (`name` and `slug`), and delete (documents and chunks). `CollectionCreateRequest` / `CollectionUpdateRequest` have `extra="forbid"`.
 
 ### C2 — Implementation
 
 Wire thin routes → existing services, in order:
 
-1. `POST /v1/collections`
+1. `POST /v1/collections`, `GET /v1/collections`, `GET /v1/collections/{id}`, `PATCH /v1/collections/{id}`, `DELETE /v1/collections/{id}`
 2. `POST /v1/documents`, `POST /v1/documents/json`, `GET /v1/documents`, `GET /v1/documents/{id}`, `PATCH /v1/documents/{id}`, `DELETE /v1/documents/{id}`, `GET /v1/documents/{id}/status`
 3. `POST /v1/retrieve`
 4. `POST /v1/query` (`retrieval_service` then `answer_service`)
