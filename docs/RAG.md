@@ -1,6 +1,6 @@
 # RAG Pipeline
 
-Technical reference for the working RAG pipeline. Entry points today are the CLI (`retrieve`, `query`) and Celery (`run_process_document`). HTTP routes are defined but not wired.
+Technical reference for the working RAG pipeline. Entry points today are the CLI (`retrieve`, `query`) and Celery (`run_process_document`). HTTP routes are defined (OpenAPI at `/docs`) but not wired.
 
 ## Pipeline Overview
 
@@ -36,6 +36,15 @@ flowchart LR
 ```
 
 Key files: `app/rag/processor.py`, `app/rag/retrieval.py`, `app/rag/rerank.py`, `app/rag/generation.py`, `app/services/rag.py`.
+
+### HTTP (contract)
+
+| Operation | Path | Service | Response |
+|-----------|------|---------|----------|
+| retrieve | `POST /v1/retrieve` | `retrieval_service` | `RetrievalResult` (chunks only) |
+| query | `POST /v1/query` | `retrieval_service` then `answer_service` | `RagResponse` (`answer` + `sources`) |
+
+Request field names match the services (`query`, `top_k`, `use_rerank`, `collection_slug`, `filters`; query also has `max_tokens_context`). Tenant is the authenticated `SystemUser`, not a body field. Handlers are 501 until C2.
 
 ## Chunking
 
@@ -110,7 +119,7 @@ Implementation: `vector_search()`, `fts_search()`, `rrf_fuse()`, and `retrieve()
 
 ## Reranking
 
-Reranking is optional and off by default in the CLI (`--rerank` to enable). The API schema defaults `rerank: true` for when routes are wired.
+Reranking is optional and off by default (`use_rerank: false` on `RetrieveRequest` / `QueryRequest`; CLI `--rerank` to enable).
 
 | Setting | Default |
 |---------|---------|
@@ -153,7 +162,8 @@ Defined in `app/schemas/query.py` as `Filters`:
 |--------|----------|
 | `metadata` | Exact JSONB containment per key: `chunk_metadata @> {key: value}` |
 | `date_range` | Filters `DocumentChunk.created_at` (`after` / `before`) |
-| `owner_ref` | Schema field only — tenancy is enforced by resolving collections in `retrieval_service` via `get_collection_by_slug` |
+
+Tenancy is not a filter field: `retrieval_service` resolves collections via `get_collection_by_slug` for the authenticated `SystemUser`. Unknown filter keys are ignored by `_apply_filters`.
 
 CLI usage: `--filters '{"metadata": {"tags": ["api"]}}'`
 
@@ -214,10 +224,7 @@ SystemUser → Collection → Document → DocumentChunk
 
 ## Known Limitations
 
-- `owner_ref` filter is unused (tenant scoping via `get_collection_by_slug` in `retrieval_service`)
-- HTTP `/v1/query` still stubbed — `max_tokens_context` is wired through services/CLI only
-- Markdown path embeds raw text without title/heading prefix
-- No adjacent-chunk merge before context building
+- HTTP `/v1/retrieve` and `/v1/query` are still stubbed (501) — `max_tokens_context` is wired through services/CLI only
 - No embedding or answer caching (Redis used for job status only)
 
 See [ROADMAP_RAG.md](ROADMAP_RAG.md) for the full improvement roadmap.

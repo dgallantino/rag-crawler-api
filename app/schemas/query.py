@@ -1,6 +1,7 @@
-"""Pydantic schemas for /v1/query and /v1/agent/search endpoints.
+"""Pydantic schemas for /v1/retrieve and /v1/query.
 
-Mirrors the OpenAPI 3.1 contract in tmp-RAG-query-expected-shape.yaml exactly.
+The HTTP contract is owned by these models. FastAPI generates OpenAPI at /docs.
+Tenant identity is the authenticated SystemUser (API key); D1 wires auth.
 """
 
 from __future__ import annotations
@@ -9,6 +10,20 @@ from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.rag.generation import RagResponse, Source
+
+__all__ = [
+    "DateRange",
+    "Filters",
+    "RetrieveRequest",
+    "QueryRequest",
+    "ChunkSource",
+    "RetrievalChunk",
+    "RetrievalResult",
+    "RagResponse",
+    "Source",
+]
 
 
 class DateRange(BaseModel):
@@ -22,29 +37,33 @@ class Filters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metadata: dict[str, Any] | None = None
-    owner_ref: str | None = None
     date_range: DateRange | None = None
 
 
-class BackendQueryRequest(BaseModel):
+class RetrieveRequest(BaseModel):
+    """Body for POST /v1/retrieve. Matches retrieval_service keyword names."""
+
     model_config = ConfigDict(extra="forbid")
 
-    user_id: str = Field(min_length=1, description="Tenant identifier supplied by the trusted caller")
     query: str = Field(min_length=1, description="Natural language query")
     top_k: int = Field(default=5, ge=1, le=50, description="Number of chunks to retrieve")
-    rerank: bool = Field(default=True, description="Whether to apply a reranking pass")
-    collection: str | None = Field(default=None, description="Named collection to search within")
+    use_rerank: bool = Field(
+        default=False, description="Whether to apply a reranking pass"
+    )
+    collection_slug: str | None = Field(
+        default=None, description="Named collection to search within"
+    )
     filters: Filters | None = None
-    max_tokens_context: int | None = Field(default=None, ge=1, description="Optional cap on total tokens returned")
 
 
-class AgentSearchRequest(BaseModel):
-    """Intentionally minimal. user_id, top_k, rerank, and filters are resolved server-side."""
+class QueryRequest(RetrieveRequest):
+    """Body for POST /v1/query: retrieve params plus optional LLM context cap."""
 
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(min_length=1, description="Natural language query")
-    collection: str | None = Field(default=None, description="Optional collection slug to restrict search to")
+    max_tokens_context: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional cap on total tokens included in the LLM context",
+    )
 
 
 class ChunkSource(BaseModel):
@@ -61,25 +80,10 @@ class RetrievalChunk(BaseModel):
 
 
 class RetrievalResult(BaseModel):
-    """Full retrieval result returned by /v1/query (debug fields included)."""
+    """Shaped retrieval result from chunks_to_retrieval_result."""
 
     results: list[RetrievalChunk] = Field(default_factory=list)
     query_used: str | None = None
     latency_ms: int | None = None
     top_k: int | None = None
     reranked: bool | None = None
-
-
-class AgentRetrievalResult(BaseModel):
-    """Trimmed result for /v1/agent/search — debug fields stripped."""
-
-    results: list[RetrievalChunk] = Field(default_factory=list)
-    query_used: str | None = None
-
-
-class ErrorResponse(BaseModel):
-    """Shared error envelope across all endpoints."""
-
-    error: str
-    message: str
-    request_id: str | None = None

@@ -48,7 +48,7 @@ See [docs/RAG.md](docs/RAG.md) for RAG technical details and [docs/ROADMAP.md](d
 
 ## API (Contract Only)
 
-The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI route decorators in `app/api/`. OpenAPI is auto-generated at `/docs` when the server is running. The service layer behind these routes is implemented and exercised via the CLI; only the HTTP handlers are missing.
+The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI route decorators in `app/api/`. OpenAPI is auto-generated at `/docs` when the server is running. Tenant identity is the authenticated `SystemUser` from the API key (auth wiring is D1); request bodies do not carry `user_id`. The service layer behind these routes is implemented and exercised via the CLI; only the HTTP handlers are missing.
 
 | Method | Path | Request → Response | Status |
 |--------|------|--------------------|--------|
@@ -59,10 +59,10 @@ The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI r
 | `POST` | `/v1/documents` | multipart upload → `DocumentUploadResponse` | 501 |
 | `POST` | `/v1/documents/json` | `DocumentUploadRequest` → `DocumentUploadResponse` | 501 |
 | `GET` | `/v1/documents/{id}/status` | — → `DocumentStatusResponse` | 501 |
-| `POST` | `/v1/query` | `BackendQueryRequest` → `RagResponse` | 501 |
-| `POST` | `/v1/agent/search` | `AgentSearchRequest` → `AgentRetrievalResult` | 501 |
+| `POST` | `/v1/retrieve` | `RetrieveRequest` → `RetrievalResult` | 501 |
+| `POST` | `/v1/query` | `QueryRequest` → `RagResponse` | 501 |
 
-`POST /v1/query` returns a grounded answer plus source citations. `POST /v1/agent/search` returns retrieved chunks only (no LLM answer).
+`POST /v1/retrieve` returns ranked chunks only (no LLM). `POST /v1/query` runs the same retrieve path then returns a grounded answer plus source citations. Errors use `{error, message, request_id}`.
 
 ## CLI (Development / Debugging)
 
@@ -168,5 +168,5 @@ E2e tests write a YAML test report (request, response, database dumps) to `E2E_R
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the full milestone plan. Scoped roadmaps:
 
-- [docs/ROADMAP_RAG.md](docs/ROADMAP_RAG.md) — retrieval, generation, document indexing, query/agent API
+- [docs/ROADMAP_RAG.md](docs/ROADMAP_RAG.md) — retrieval, generation, document indexing, retrieve/query API
 - [docs/ROADMAP_CRAWLER.md](docs/ROADMAP_CRAWLER.md) — crawl pipeline, persist/ingest, crawl API
