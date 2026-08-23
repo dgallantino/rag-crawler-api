@@ -6,7 +6,8 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Collection, SystemUser
+from app.models import Collection, Document, DocumentChunk, SystemUser
+from app.services import job_status
 
 
 class CollectionNotFoundError(Exception):
@@ -54,6 +55,11 @@ def create_collection(
     return collection
 
 
+def list_collections(db: Session, user: SystemUser) -> list[Collection]:
+    """Return all collections owned by ``user``. Empty list is OK."""
+    return db.query(Collection).filter(Collection.system_user_id == user.id).all()
+
+
 def get_collection(db: Session, user: SystemUser, collection_id: UUID) -> Collection:
     """Fetch a collection by ID, scoped to the given user.
 
@@ -68,6 +74,61 @@ def get_collection(db: Session, user: SystemUser, collection_id: UUID) -> Collec
     if collection is None:
         raise CollectionNotFoundError(str(collection_id))
     return collection
+
+
+def update_collection(
+    db: Session,
+    user: SystemUser,
+    collection_id: UUID,
+    *,
+    name: str | None = None,
+    slug: str | None = None,
+) -> Collection:
+    """Update name and/or slug on a collection owned by ``user``.
+
+    Omitted fields are left unchanged. Does not re-derive slug from name.
+
+    Raises:
+        CollectionNotFoundError: If no matching collection is found.
+        CollectionConflictError: If the new slug already exists for the user.
+    """
+    collection = get_collection(db, user, collection_id)
+    if name is not None:
+        collection.name = name
+    if slug is not None:
+        collection.slug = slug
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise CollectionConflictError(
+            f"Collection with slug '{slug}' already exists"
+        ) from exc
+    db.refresh(collection)
+    return collection
+
+
+def delete_collection(db: Session, user: SystemUser, collection_id: UUID) -> None:
+    """Delete a collection owned by ``user``, including its documents and chunks.
+
+    Raises:
+        CollectionNotFoundError: If no matching collection is found.
+    """
+    collection = get_collection(db, user, collection_id)
+    document_ids = [
+        str(row[0])
+        for row in db.query(Document.id)
+        .filter(Document.collection_id == collection.id)
+        .all()
+    ]
+    db.query(DocumentChunk).filter(
+        DocumentChunk.collection_id == collection.id
+    ).delete()
+    db.query(Document).filter(Document.collection_id == collection.id).delete()
+    db.delete(collection)
+    db.commit()
+    for document_id in document_ids:
+        job_status.delete_job_status(document_id)
 
 
 def get_collection_by_slug(

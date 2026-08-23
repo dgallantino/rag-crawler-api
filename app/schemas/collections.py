@@ -3,15 +3,30 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CollectionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=255)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
 
 
-class CollectionCreateResponse(BaseModel):
+class CollectionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    slug: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> "CollectionUpdateRequest":
+        if self.name is None and self.slug is None:
+            raise ValueError("At least one of name or slug is required")
+        return self
+
+
+class CollectionResponse(BaseModel):
     id: UUID
     name: str
     slug: str
