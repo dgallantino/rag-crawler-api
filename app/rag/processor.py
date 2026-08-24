@@ -64,6 +64,9 @@ class DocumentProcessor(ABC):
         if document is None:
             return
 
+        source_content = document.content
+        source_title = document.title
+
         try:
             document.status = "processing"
             document.error_message = None
@@ -87,6 +90,13 @@ class DocumentProcessor(ABC):
             vectors = self.embed_texts(embed_inputs)
             on_status(DocumentStatusEvent(document_id, "embedding", "completed"))
 
+            current = db.query(Document).filter(Document.id == UUID(document_id)).one_or_none()
+            if current is None:
+                return
+            if current.content != source_content or current.title != source_title:
+                return
+
+            document = current
             on_status(DocumentStatusEvent(document_id, "storing", "in_progress"))
             db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
 

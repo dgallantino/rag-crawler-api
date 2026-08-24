@@ -193,3 +193,61 @@ def test_process_document_empty_chunks_fails_without_deleting_existing(
     )
     assert len(chunks) == 1
     assert chunks[0].content == "keep me"
+
+
+def test_process_document_skips_store_when_superseded(
+    db_session,
+    test_collection,
+) -> None:
+    document = Document(
+        collection_id=test_collection.id,
+        url="file://race.md",
+        title="race.md",
+        content="version-b",
+    )
+    db_session.add(document)
+    db_session.commit()
+
+    existing = DocumentChunk(
+        document_id=document.id,
+        collection_id=test_collection.id,
+        chunk_index=0,
+        content="chunk-c",
+        chunk_vector=[0.9] * 1536,
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    processor = _make_processor()
+
+    def chunk_and_supersede(content: str) -> list[ChunkResult]:
+        document.content = "version-c"
+        document.title = "updated.md"
+        db_session.commit()
+        return [ChunkResult(content="chunk-b", metadata={})]
+
+    processor.chunk = Mock(side_effect=chunk_and_supersede)
+    processor.embed_texts = Mock(return_value=[[0.1] * 1536])
+
+    on_status = Mock()
+    processor.process_document(db_session, str(document.id), on_status=on_status)
+
+    db_session.refresh(document)
+    assert document.content == "version-c"
+    assert document.title == "updated.md"
+
+    chunks = (
+        db_session.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index)
+        .all()
+    )
+    assert len(chunks) == 1
+    assert chunks[0].content == "chunk-c"
+
+    storing_events = [
+        call.args[0]
+        for call in on_status.call_args_list
+        if call.args[0].step == "storing"
+    ]
+    assert storing_events == []
