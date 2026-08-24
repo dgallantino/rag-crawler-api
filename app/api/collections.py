@@ -5,8 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_system_user
 from app.api.stubs import raise_not_implemented
 from app.database import get_db
+from app.models import SystemUser
 from app.schemas.collections import (
     CollectionCreateRequest,
     CollectionResponse,
@@ -17,7 +19,9 @@ from app.schemas.common import ErrorResponse
 router = APIRouter(
     prefix="/collections",
     tags=["collections"],
+    dependencies=[Depends(get_current_system_user)],
     responses={
+        401: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
         501: {"model": ErrorResponse},
     },
@@ -33,6 +37,7 @@ router = APIRouter(
 def create_collection_route(
     body: CollectionCreateRequest,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> CollectionResponse:
     raise_not_implemented()
 
@@ -40,6 +45,7 @@ def create_collection_route(
 @router.get("", response_model=list[CollectionResponse])
 def list_collections_route(
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> list[CollectionResponse]:
     raise_not_implemented()
 
@@ -52,6 +58,7 @@ def list_collections_route(
 def get_collection_route(
     collection_id: UUID,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> CollectionResponse:
     raise_not_implemented()
 
@@ -68,6 +75,7 @@ def update_collection_route(
     collection_id: UUID,
     body: CollectionUpdateRequest,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> CollectionResponse:
     raise_not_implemented()
 
@@ -80,5 +88,6 @@ def update_collection_route(
 def delete_collection_route(
     collection_id: UUID,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> None:
     raise_not_implemented()

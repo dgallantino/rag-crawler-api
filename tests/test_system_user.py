@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 from app.auth import generate_api_key, hash_api_key, verify_api_key
 from app.cli import cmd_create_system_user, main
 from app.models import SystemUser
-from app.services.system_user import create_system_user
+from app.services.system_user import (
+    create_system_user,
+    get_system_user_by_api_key,
+    get_system_user_by_api_key_hash,
+)
 
 
 def test_hash_api_key_is_deterministic(api_key_secret: str) -> None:
@@ -36,6 +40,27 @@ def test_create_system_user_persists_hash_not_plaintext(
     stored = db_session.get(SystemUser, user.id)
     assert stored is not None
     assert stored.api_key_hash == user.api_key_hash
+
+
+def test_get_system_user_by_api_key_hash(db_session, api_key_secret: str) -> None:
+    user, api_key = create_system_user(db_session, name="Hash Lookup Tenant")
+    key_hash = hash_api_key(api_key, api_key_secret)
+
+    found = get_system_user_by_api_key_hash(db_session, key_hash)
+    assert found is not None
+    assert found.id == user.id
+
+    assert get_system_user_by_api_key_hash(db_session, "0" * 64) is None
+
+
+def test_get_system_user_by_api_key(db_session, api_key_secret: str) -> None:
+    user, api_key = create_system_user(db_session, name="Plaintext Lookup Tenant")
+
+    found = get_system_user_by_api_key(db_session, api_key)
+    assert found is not None
+    assert found.id == user.id
+
+    assert get_system_user_by_api_key(db_session, "wrong-key") is None
 
 
 def test_cli_create_system_user(db_session, api_key_secret: str, monkeypatch, capsys) -> None:

@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 
-from app.auth import generate_api_key, hash_api_key
+from app.auth import generate_api_key, hash_api_key, verify_api_key
 from app.config import get_settings
 from app.models import SystemUser
 
@@ -35,4 +35,19 @@ def get_system_user_by_name(db: Session, name: str) -> SystemUser:
     if len(users) > 1:
         raise SystemUserLookupError(f"Multiple system users found with name '{name}'")
     return users[0]
+
+
+def get_system_user_by_api_key_hash(db: Session, key_hash: str) -> SystemUser | None:
+    return db.query(SystemUser).filter(SystemUser.api_key_hash == key_hash).one_or_none()
+
+
+def get_system_user_by_api_key(db: Session, api_key: str) -> SystemUser | None:
+    settings = get_settings()
+    key_hash = hash_api_key(api_key, settings.api_key_hash_secret)
+    user = get_system_user_by_api_key_hash(db, key_hash)
+    if user is None or not verify_api_key(
+        api_key, user.api_key_hash, settings.api_key_hash_secret
+    ):
+        return None
+    return user
 

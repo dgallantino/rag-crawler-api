@@ -5,9 +5,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_system_user
 from app.api.stubs import raise_not_implemented
 from app.database import get_db
 from app.exceptions import ValidationFailedError
+from app.models import SystemUser
 from app.schemas.common import ErrorResponse
 from app.schemas.documents import (
     DocumentListItem,
@@ -22,7 +24,9 @@ from app.schemas.documents import (
 router = APIRouter(
     prefix="/documents",
     tags=["documents"],
+    dependencies=[Depends(get_current_system_user)],
     responses={
+        401: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
         501: {"model": ErrorResponse},
     },
@@ -50,6 +54,7 @@ async def upload_document(
     collection_id: UUID | None = Form(None),
     collection_slug: str | None = Form(None),
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentUploadResponse:
     _validate_multipart_collection(collection_id, collection_slug)
     raise_not_implemented()
@@ -64,6 +69,7 @@ async def upload_document(
 def upload_document_json(
     body: DocumentUploadRequest,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentUploadResponse:
     raise_not_implemented()
 
@@ -73,6 +79,7 @@ def list_documents_route(
     collection_id: UUID | None = None,
     collection_slug: str | None = None,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> list[DocumentListItem]:
     if collection_id is not None and collection_slug is not None:
         raise ValidationFailedError(
@@ -89,6 +96,7 @@ def list_documents_route(
 def document_status(
     document_id: UUID,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentStatusResponse:
     raise_not_implemented()
 
@@ -101,6 +109,7 @@ def document_status(
 def get_document_route(
     document_id: UUID,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentResponse:
     raise_not_implemented()
 
@@ -114,6 +123,7 @@ def update_document_route(
     document_id: UUID,
     body: DocumentUpdateRequest,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentResponse:
     raise_not_implemented()
 
@@ -126,5 +136,6 @@ def update_document_route(
 def delete_document_route(
     document_id: UUID,
     db: Session = Depends(get_db),
+    user: SystemUser = Depends(get_current_system_user),
 ) -> None:
     raise_not_implemented()
