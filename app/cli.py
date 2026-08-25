@@ -425,6 +425,24 @@ def cmd_db_delete_all(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_debug_server(args: argparse.Namespace) -> int:
+    """Run the FastAPI app under uvicorn for local debugging."""
+    import uvicorn
+
+    print(
+        f"debug server: http://{args.host}:{args.port}"
+        f"{' (reload)' if args.reload else ''}",
+        file=sys.stderr,
+    )
+    uvicorn.run(
+        "app.main:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="RAG Crawler API administrative CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -539,6 +557,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional correlation ID for logs",
     )
     crawler_parser.set_defaults(func=cmd_run_crawler)
+
+    debug_server_parser = subparsers.add_parser(
+        "run-debug-server",
+        help="Run the FastAPI app under uvicorn for local debugging",
+    )
+    debug_server_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1)",
+    )
+    debug_server_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Bind port (default: 8000)",
+    )
+    debug_server_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Reload on code changes (disable when attaching a debugger)",
+    )
+    debug_server_parser.set_defaults(func=cmd_run_debug_server)
 
     args = parser.parse_args(argv)
     return args.func(args)

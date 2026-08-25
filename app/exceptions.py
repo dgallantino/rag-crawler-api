@@ -9,6 +9,14 @@ from fastapi.responses import JSONResponse
 from app.schemas.common import ErrorResponse
 
 
+class UnauthorizedError(Exception):
+    """Raised when the request lacks a valid API key (→ 401)."""
+
+    def __init__(self, message: str = "Invalid API key") -> None:
+        super().__init__(message)
+        self.message = message
+
+
 class ForbiddenError(Exception):
     """Raised when the tenant lacks access to the requested resource (→ 403)."""
 
@@ -64,6 +72,18 @@ def _format_validation_errors(exc: RequestValidationError) -> str:
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach all custom exception handlers to the FastAPI app."""
+
+    @app.exception_handler(UnauthorizedError)
+    async def handle_unauthorized(request: Request, exc: UnauthorizedError) -> JSONResponse:
+        return JSONResponse(
+            status_code=401,
+            content=ErrorResponse(
+                error="unauthorized",
+                message=exc.message,
+                request_id=_request_id(request),
+            ).model_dump(),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     @app.exception_handler(ForbiddenError)
     async def handle_forbidden(request: Request, exc: ForbiddenError) -> JSONResponse:
