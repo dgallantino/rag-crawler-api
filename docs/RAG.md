@@ -44,7 +44,7 @@ Key files: `app/rag/processor.py`, `app/rag/retrieval.py`, `app/rag/rerank.py`, 
 | retrieve | `POST /v1/retrieve` | `retrieval_service` | `RetrievalResult` (chunks only) |
 | query | `POST /v1/query` | `retrieval_service` then `answer_service` | `RagResponse` (`answer` + `sources`) |
 
-Request field names match the services (`query`, `top_k`, `use_rerank`, `collection_slug`, `filters`; query also has `max_tokens_context`). Tenant is the authenticated `SystemUser`, not a body field. Handlers are 501 until C2.
+Request field names match the services (`query`, `top_k`, `use_rerank`, `collection_slug`, `filters`; query also has `max_tokens_context`). Tenant is the authenticated `SystemUser`, not a body field. Handlers call `retrieval_service` / `answer_service` (same path as the CLI).
 
 ## Chunking
 
@@ -224,7 +224,6 @@ SystemUser → Collection → Document → DocumentChunk
 
 ## Known Limitations
 
-- HTTP `/v1/retrieve` and `/v1/query` are still stubbed (501) — `max_tokens_context` is wired through services/CLI only
 - No embedding or answer caching (Redis used for job status only)
 
 See [ROADMAP_RAG.md](ROADMAP_RAG.md) for the full improvement roadmap.
