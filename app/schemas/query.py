@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.rag.generation import RagResponse, Source
+from app.schemas.examples import EXAMPLES
 
 __all__ = [
     "DateRange",
@@ -27,14 +28,20 @@ __all__ = [
 
 
 class DateRange(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [EXAMPLES["date_range"]]},
+    )
 
     after: date | None = None
     before: date | None = None
 
 
 class Filters(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [EXAMPLES["filters"]]},
+    )
 
     metadata: dict[str, Any] | None = None
     date_range: DateRange | None = None
@@ -43,7 +50,10 @@ class Filters(BaseModel):
 class RetrieveRequest(BaseModel):
     """Body for POST /v1/retrieve. Matches retrieval_service keyword names."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [EXAMPLES["retrieve_simple"]]},
+    )
 
     query: str = Field(min_length=1, description="Natural language query")
     top_k: int = Field(default=5, ge=1, le=50, description="Number of chunks to retrieve")
@@ -59,6 +69,11 @@ class RetrieveRequest(BaseModel):
 class QueryRequest(RetrieveRequest):
     """Body for POST /v1/query: retrieve params plus optional LLM context cap."""
 
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [EXAMPLES["query_grounded"]]},
+    )
+
     max_tokens_context: int | None = Field(
         default=None,
         ge=1,
@@ -67,12 +82,20 @@ class QueryRequest(RetrieveRequest):
 
 
 class ChunkSource(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [EXAMPLES["chunk_source"]]},
+    )
+
     document: str | None = None
     page: int | None = None
     url: str | None = None
 
 
 class RetrievalChunk(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [EXAMPLES["retrieval_chunk"]]},
+    )
+
     chunk_id: str | None = None
     text: str | None = None
     score: float | None = None
@@ -81,6 +104,10 @@ class RetrievalChunk(BaseModel):
 
 class RetrievalResult(BaseModel):
     """Shaped retrieval result from chunks_to_retrieval_result."""
+
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [EXAMPLES["retrieval_result"]]},
+    )
 
     results: list[RetrievalChunk] = Field(default_factory=list)
     query_used: str | None = None

@@ -5,16 +5,24 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.examples import EXAMPLES
+
 
 class CollectionCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [EXAMPLES["create_collection_with_slug"]]},
+    )
 
     name: str = Field(min_length=1, max_length=255)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class CollectionUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [EXAMPLES["update_collection_rename"]]},
+    )
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
@@ -27,7 +35,10 @@ class CollectionUpdateRequest(BaseModel):
 
 
 class CollectionResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"examples": [EXAMPLES["collection"]]},
+    )
 
     id: UUID
     name: str

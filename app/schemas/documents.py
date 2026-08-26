@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.examples import EXAMPLES
+
 
 def validate_collection_identifier(
     collection_id: UUID | None,
@@ -17,7 +19,10 @@ def validate_collection_identifier(
 
 
 class DocumentUploadRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [EXAMPLES["upload_document_json_by_slug"]]},
+    )
 
     content: str = Field(min_length=1, description="Markdown file content (UTF-8)")
     filename: str = Field(min_length=1, max_length=255, description="Original .md filename")
@@ -36,12 +41,27 @@ class DocumentUploadRequest(BaseModel):
 
 
 class DocumentUploadResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [EXAMPLES["document_upload_accepted"]]},
+    )
+
     document_id: UUID
     filename: str
     accepted: bool = True
 
 
 class DocumentStatusResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                EXAMPLES["document_status_queued"],
+                EXAMPLES["document_status_processing"],
+                EXAMPLES["document_status_success"],
+                EXAMPLES["document_status_failed"],
+            ]
+        },
+    )
+
     document_id: UUID
     status: str
     step: str | None = None
@@ -50,7 +70,10 @@ class DocumentStatusResponse(BaseModel):
 
 
 class DocumentUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [EXAMPLES["update_document_title"]]},
+    )
 
     title: str | None = Field(default=None, min_length=1, max_length=512)
     content: str | None = Field(
@@ -65,7 +88,10 @@ class DocumentUpdateRequest(BaseModel):
 
 
 class DocumentListItem(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"examples": [EXAMPLES["document_list_item"]]},
+    )
 
     id: UUID
     collection_id: UUID
@@ -77,4 +103,9 @@ class DocumentListItem(BaseModel):
 
 
 class DocumentResponse(DocumentListItem):
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"examples": [EXAMPLES["document"]]},
+    )
+
     content: str | None
