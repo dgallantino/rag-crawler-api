@@ -251,3 +251,52 @@ def test_process_document_skips_store_when_superseded(
         if call.args[0].step == "storing"
     ]
     assert storing_events == []
+    assert document.status is None
+    failed_events = [
+        call.args[0]
+        for call in on_status.call_args_list
+        if call.args[0].step == "failed"
+    ]
+    assert failed_events == []
+
+
+def test_process_document_failure_does_not_mark_failed_when_superseded(
+    db_session,
+    test_collection,
+) -> None:
+    document = Document(
+        collection_id=test_collection.id,
+        url="file://race-fail.md",
+        title="race-fail.md",
+        content="version-b",
+        status="success",
+    )
+    db_session.add(document)
+    db_session.commit()
+
+    processor = _make_processor()
+
+    def chunk_and_supersede(content: str) -> list[ChunkResult]:
+        document.content = "version-c"
+        document.status = None
+        db_session.commit()
+        return [ChunkResult(content="chunk-b", metadata={})]
+
+    processor.chunk = Mock(side_effect=chunk_and_supersede)
+    processor.embed_texts = Mock(side_effect=RuntimeError("embed failed"))
+
+    on_status = Mock()
+    with pytest.raises(RuntimeError, match="embed failed"):
+        processor.process_document(db_session, str(document.id), on_status=on_status)
+
+    db_session.refresh(document)
+    assert document.content == "version-c"
+    assert document.status is None
+    assert document.error_message is None
+
+    failed_events = [
+        call.args[0]
+        for call in on_status.call_args_list
+        if call.args[0].step == "failed"
+    ]
+    assert failed_events == []
