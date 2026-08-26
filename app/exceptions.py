@@ -7,6 +7,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.schemas.common import ErrorResponse
+from app.services.collections import CollectionConflictError, CollectionNotFoundError
+from app.services.documents import (
+    DocumentConflictError,
+    DocumentNotFoundError,
+    DocumentValidationError,
+)
 
 
 class UnauthorizedError(Exception):
@@ -61,6 +67,25 @@ def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
+def _error_response(
+    request: Request,
+    status_code: int,
+    error: str,
+    message: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=ErrorResponse(
+            error=error,
+            message=message,
+            request_id=_request_id(request),
+        ).model_dump(),
+        headers=headers,
+    )
+
+
 def _format_validation_errors(exc: RequestValidationError) -> str:
     parts: list[str] = []
     for err in exc.errors():
@@ -75,93 +100,79 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(UnauthorizedError)
     async def handle_unauthorized(request: Request, exc: UnauthorizedError) -> JSONResponse:
-        return JSONResponse(
-            status_code=401,
-            content=ErrorResponse(
-                error="unauthorized",
-                message=exc.message,
-                request_id=_request_id(request),
-            ).model_dump(),
+        return _error_response(
+            request,
+            401,
+            "unauthorized",
+            exc.message,
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     @app.exception_handler(ForbiddenError)
     async def handle_forbidden(request: Request, exc: ForbiddenError) -> JSONResponse:
-        return JSONResponse(
-            status_code=403,
-            content=ErrorResponse(
-                error="forbidden",
-                message=exc.message,
-                request_id=_request_id(request),
-            ).model_dump(),
-        )
+        return _error_response(request, 403, "forbidden", exc.message)
 
     @app.exception_handler(NotFoundError)
     async def handle_not_found(request: Request, exc: NotFoundError) -> JSONResponse:
-        return JSONResponse(
-            status_code=404,
-            content=ErrorResponse(
-                error="not_found",
-                message=exc.message,
-                request_id=_request_id(request),
-            ).model_dump(),
-        )
+        return _error_response(request, 404, "not_found", exc.message)
+
+    @app.exception_handler(CollectionNotFoundError)
+    async def handle_collection_not_found(
+        request: Request, exc: CollectionNotFoundError
+    ) -> JSONResponse:
+        return _error_response(request, 404, "not_found", str(exc))
+
+    @app.exception_handler(DocumentNotFoundError)
+    async def handle_document_not_found(
+        request: Request, exc: DocumentNotFoundError
+    ) -> JSONResponse:
+        return _error_response(request, 404, "not_found", str(exc))
 
     @app.exception_handler(ConflictError)
     async def handle_conflict(request: Request, exc: ConflictError) -> JSONResponse:
-        return JSONResponse(
-            status_code=409,
-            content=ErrorResponse(
-                error="conflict",
-                message=exc.message,
-                request_id=_request_id(request),
-            ).model_dump(),
-        )
+        return _error_response(request, 409, "conflict", exc.message)
+
+    @app.exception_handler(CollectionConflictError)
+    async def handle_collection_conflict(
+        request: Request, exc: CollectionConflictError
+    ) -> JSONResponse:
+        return _error_response(request, 409, "conflict", str(exc))
+
+    @app.exception_handler(DocumentConflictError)
+    async def handle_document_conflict(
+        request: Request, exc: DocumentConflictError
+    ) -> JSONResponse:
+        return _error_response(request, 409, "conflict", str(exc))
 
     @app.exception_handler(ValidationFailedError)
     async def handle_validation(request: Request, exc: ValidationFailedError) -> JSONResponse:
-        return JSONResponse(
-            status_code=422,
-            content=ErrorResponse(
-                error="validation_error",
-                message=exc.message,
-                request_id=_request_id(request),
-            ).model_dump(),
-        )
+        return _error_response(request, 422, "validation_error", exc.message)
+
+    @app.exception_handler(DocumentValidationError)
+    async def handle_document_validation(
+        request: Request, exc: DocumentValidationError
+    ) -> JSONResponse:
+        return _error_response(request, 422, "validation_error", str(exc))
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            content=ErrorResponse(
-                error="validation_error",
-                message=_format_validation_errors(exc),
-                request_id=_request_id(request),
-            ).model_dump(),
+        return _error_response(
+            request,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "validation_error",
+            _format_validation_errors(exc),
         )
 
     @app.exception_handler(NotImplementedAPIError)
     async def handle_not_implemented(
         request: Request, exc: NotImplementedAPIError
     ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            content=ErrorResponse(
-                error="not_implemented",
-                message=exc.message,
-                request_id=_request_id(request),
-            ).model_dump(),
-        )
+        return _error_response(request, status.HTTP_501_NOT_IMPLEMENTED, "not_implemented", exc.message)
 
     @app.exception_handler(Exception)
     async def handle_unhandled(request: Request, exc: Exception) -> JSONResponse:
-        return JSONResponse(
-            status_code=500,
-            content=ErrorResponse(
-                error="internal_server_error",
-                message="An unexpected error occurred",
-                request_id=_request_id(request),
-            ).model_dump(),
+        return _error_response(
+            request, 500, "internal_server_error", "An unexpected error occurred"
         )

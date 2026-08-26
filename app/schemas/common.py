@@ -7,10 +7,6 @@ class HealthResponse(BaseModel):
     status: str
 
 
-class MessageResponse(BaseModel):
-    message: str
-
-
 class ErrorResponse(BaseModel):
     """Shared error envelope across all endpoints."""
 
