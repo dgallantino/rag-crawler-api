@@ -1,6 +1,6 @@
 # RAG Crawler API
 
-A RAG (Retrieval-Augmented Generation) system with a defined HTTP API contract and a working offline pipeline (CLI + Celery). The RAG pipeline indexes markdown documents, stores vectors in PostgreSQL/pgvector, and supports semantic retrieval with optional reranking and LLM-grounded answers. HTTP business routes are defined but not yet implemented — handlers return 501.
+A RAG (Retrieval-Augmented Generation) system with a working HTTP API and offline pipeline (CLI + Celery). The RAG pipeline indexes markdown documents, stores vectors in PostgreSQL/pgvector, and supports semantic retrieval with optional reranking and LLM-grounded answers. `/v1/*` business routes are wired to the service layer.
 
 ## Tech Stack
 
@@ -21,13 +21,13 @@ A RAG (Retrieval-Augmented Generation) system with a defined HTTP API contract a
 flowchart LR
   subgraph working [Working today]
     CLI[CLI upload] --> Doc[Document]
+    HTTP["/v1/* routes"] --> Doc
     Doc --> Celery[Celery process_document]
     Celery --> Chunks[DocumentChunk + pgvector]
-    Chunks --> Query[CLI retrieve/query]
+    Chunks --> Query[CLI or HTTP retrieve/query]
   end
   subgraph planned [Planned]
     Crawl[Crawler] -.-> Doc
-    HTTP["/v1/* routes"] -.-> Query
   end
 ```
 
@@ -39,36 +39,35 @@ flowchart LR
 | Document / collection / system-user services | Working via CLI |
 | Celery `run_process_document` | Working |
 | Health endpoints (`/health`, `/health/db`) | Working |
-| REST `/v1/*` business routes | Contract defined; handlers return 501 |
+| REST `/v1/*` business routes | Working (API-key auth; thin handlers → services) |
 | Crawler library | Skeletal; not wired to API, Celery, or DB |
 | CI (GitHub Actions pytest) | Working (e2e still opt-in) |
-| Auth wiring, Alembic migrations | Planned |
+| Rate limits, Alembic migrations | Planned |
 
 See [docs/RAG.md](docs/RAG.md) for RAG technical details and [docs/ROADMAP.md](docs/ROADMAP.md) for planned work.
 
-## API (Contract Only)
+## API
 
-The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI route decorators in `app/api/`. OpenAPI is auto-generated at `/docs` when the server is running. Tenant identity is the authenticated `SystemUser` from the API key (auth wiring is D1); request bodies do not carry `user_id`. The service layer behind these routes is implemented and exercised via the CLI; only the HTTP handlers are missing.
+The HTTP contract is defined by Pydantic schemas in `app/schemas/` and FastAPI route handlers in `app/api/`. OpenAPI is auto-generated at `/docs` when the server is running. Tenant identity is the authenticated `SystemUser` from the `Authorization: Bearer <api_key>` header; request bodies do not carry `user_id`. Handlers are thin adapters over `app.services` (same path as the CLI).
 
 | Method | Path | Request → Response | Status |
 |--------|------|--------------------|--------|
-| `GET` | `/` | — → `MessageResponse` | 501 |
 | `GET` | `/health` | — → `HealthResponse` | Working |
 | `GET` | `/health/db` | — → `HealthResponse` | Working |
-| `POST` | `/v1/collections` | `CollectionCreateRequest` → `CollectionResponse` | 501 |
-| `GET` | `/v1/collections` | — → `list[CollectionResponse]` | 501 |
-| `GET` | `/v1/collections/{id}` | — → `CollectionResponse` | 501 |
-| `PATCH` | `/v1/collections/{id}` | `CollectionUpdateRequest` → `CollectionResponse` | 501 |
-| `DELETE` | `/v1/collections/{id}` | — → 204 | 501 |
-| `POST` | `/v1/documents` | multipart upload → `DocumentUploadResponse` | 501 |
-| `POST` | `/v1/documents/json` | `DocumentUploadRequest` → `DocumentUploadResponse` | 501 |
-| `GET` | `/v1/documents` | optional collection filter → `list[DocumentListItem]` | 501 |
-| `GET` | `/v1/documents/{id}` | — → `DocumentResponse` | 501 |
-| `PATCH` | `/v1/documents/{id}` | `DocumentUpdateRequest` → `DocumentResponse` | 501 |
-| `DELETE` | `/v1/documents/{id}` | — → 204 | 501 |
-| `GET` | `/v1/documents/{id}/status` | — → `DocumentStatusResponse` | 501 |
-| `POST` | `/v1/retrieve` | `RetrieveRequest` → `RetrievalResult` | 501 |
-| `POST` | `/v1/query` | `QueryRequest` → `RagResponse` | 501 |
+| `POST` | `/v1/collections` | `CollectionCreateRequest` → `CollectionResponse` | Working |
+| `GET` | `/v1/collections` | — → `list[CollectionResponse]` | Working |
+| `GET` | `/v1/collections/{id}` | — → `CollectionResponse` | Working |
+| `PATCH` | `/v1/collections/{id}` | `CollectionUpdateRequest` → `CollectionResponse` | Working |
+| `DELETE` | `/v1/collections/{id}` | — → 204 | Working |
+| `POST` | `/v1/documents` | multipart upload → `DocumentUploadResponse` | Working |
+| `POST` | `/v1/documents/json` | `DocumentUploadRequest` → `DocumentUploadResponse` | Working |
+| `GET` | `/v1/documents` | optional collection filter → `list[DocumentListItem]` | Working |
+| `GET` | `/v1/documents/{id}` | — → `DocumentResponse` | Working |
+| `PATCH` | `/v1/documents/{id}` | `DocumentUpdateRequest` → `DocumentResponse` | Working |
+| `DELETE` | `/v1/documents/{id}` | — → 204 | Working |
+| `GET` | `/v1/documents/{id}/status` | — → `DocumentStatusResponse` | Working |
+| `POST` | `/v1/retrieve` | `RetrieveRequest` → `RetrievalResult` | Working |
+| `POST` | `/v1/query` | `QueryRequest` → `RagResponse` | Working |
 
 `POST /v1/retrieve` returns ranked chunks only (no LLM). `POST /v1/query` runs the same retrieve path then returns a grounded answer plus source citations. Errors use `{error, message, request_id}`.
 

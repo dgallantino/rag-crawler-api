@@ -60,5 +60,6 @@ Run everything from the repo root using the project virtualenv at `venv/`
   is skeletal and unwired (`app/cli.py run-crawler` raises `NotImplementedError`),
   and its tests mock the pipeline — so a Chromium browser download is not needed
   for tests or the working RAG flow.
-- All HTTP `/v1/*` business routes are intentionally stubbed and return `501`;
-  the working interface today is the CLI (`python -m app.cli ...`) plus Celery.
+- HTTP `/v1/*` business routes are wired to services (API-key auth via
+  `Authorization: Bearer`). The CLI (`python -m app.cli ...`) plus Celery remain
+  valid for local debugging.
