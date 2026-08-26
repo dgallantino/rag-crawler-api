@@ -22,10 +22,19 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Re-queue in-flight tasks when a worker dies mid-processing.
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    worker_prefetch_multiplier=1,
 )
 
 
-@celery_app.task(name="run_process_document", bind=True, max_retries=0)
+@celery_app.task(
+    name="run_process_document",
+    bind=True,
+    acks_late=True,
+    max_retries=0,
+)
 def run_process_document(self, document_id: str) -> None:
     """Chunk, embed, and store a document."""
     db = SessionLocal()

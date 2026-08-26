@@ -113,3 +113,83 @@ def test_process_document_missing_is_noop(db_session) -> None:
     on_status = Mock()
     processor.process_document(db_session, str(uuid4()), on_status=on_status)
     on_status.assert_not_called()
+
+
+def test_process_document_commits_only_after_success(
+    db_session,
+    test_collection,
+) -> None:
+    document = Document(
+        collection_id=test_collection.id,
+        url="file://txn.md",
+        title="txn.md",
+        content="# Txn\n\nContent.",
+    )
+    db_session.add(document)
+    db_session.commit()
+
+    processor = _make_processor()
+    processor.chunk = Mock(
+        return_value=[ChunkResult(content="chunk", metadata={})]
+    )
+    processor.embed_texts = Mock(return_value=[[0.1] * 1536])
+
+    commit_calls = 0
+    original_commit = db_session.commit
+
+    def counting_commit() -> None:
+        nonlocal commit_calls
+        commit_calls += 1
+        original_commit()
+
+    db_session.commit = counting_commit  # type: ignore[method-assign]
+
+    processor.process_document(db_session, str(document.id), on_status=Mock())
+
+    assert commit_calls == 1
+    db_session.refresh(document)
+    assert document.status == "success"
+
+
+def test_process_document_empty_chunks_fails_without_deleting_existing(
+    db_session,
+    test_collection,
+) -> None:
+    document = Document(
+        collection_id=test_collection.id,
+        url="file://empty-chunks.md",
+        title="empty-chunks.md",
+        content="# Existing\n\nContent.",
+        status="success",
+    )
+    db_session.add(document)
+    db_session.commit()
+
+    existing = DocumentChunk(
+        document_id=document.id,
+        collection_id=test_collection.id,
+        chunk_index=0,
+        content="keep me",
+        chunk_vector=[0.1] * 1536,
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    processor = _make_processor()
+    processor.chunk = Mock(return_value=[])
+    on_status = Mock()
+
+    with pytest.raises(ValueError, match="zero chunks"):
+        processor.process_document(db_session, str(document.id), on_status=on_status)
+
+    db_session.refresh(document)
+    assert document.status == "failed"
+    assert "zero chunks" in (document.error_message or "")
+
+    chunks = (
+        db_session.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document.id)
+        .all()
+    )
+    assert len(chunks) == 1
+    assert chunks[0].content == "keep me"
