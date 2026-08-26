@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_system_user
-from app.api.stubs import raise_not_implemented
 from app.database import get_db
 from app.models import SystemUser
 from app.schemas.collections import (
@@ -15,6 +14,13 @@ from app.schemas.collections import (
     CollectionUpdateRequest,
 )
 from app.schemas.common import ErrorResponse
+from app.services.collections import (
+    create_collection,
+    delete_collection,
+    get_collection,
+    list_collections,
+    update_collection,
+)
 
 router = APIRouter(
     prefix="/collections",
@@ -23,7 +29,6 @@ router = APIRouter(
     responses={
         401: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
-        501: {"model": ErrorResponse},
     },
 )
 
@@ -39,7 +44,7 @@ def create_collection_route(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> CollectionResponse:
-    raise_not_implemented()
+    return create_collection(db, user, name=body.name, slug=body.slug)
 
 
 @router.get("", response_model=list[CollectionResponse])
@@ -47,7 +52,7 @@ def list_collections_route(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> list[CollectionResponse]:
-    raise_not_implemented()
+    return list_collections(db, user)
 
 
 @router.get(
@@ -60,7 +65,7 @@ def get_collection_route(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> CollectionResponse:
-    raise_not_implemented()
+    return get_collection(db, user, collection_id)
 
 
 @router.patch(
@@ -77,7 +82,9 @@ def update_collection_route(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> CollectionResponse:
-    raise_not_implemented()
+    return update_collection(
+        db, user, collection_id, name=body.name, slug=body.slug
+    )
 
 
 @router.delete(
@@ -90,4 +97,4 @@ def delete_collection_route(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> None:
-    raise_not_implemented()
+    delete_collection(db, user, collection_id)

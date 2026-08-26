@@ -47,42 +47,33 @@ def test_collections_wrong_key_returns_401(client: TestClient) -> None:
     )
 
 
-def test_collections_valid_key_still_501(client: TestClient, test_user) -> None:
-    _, api_key = test_user
-    response = client.get(
-        "/v1/collections", headers={"Authorization": f"Bearer {api_key}"}
-    )
-    assert response.status_code == 501
-    body = response.json()
-    assert body["error"] == "not_implemented"
-    assert body["request_id"]
+def test_collections_valid_key_lists_empty(client: TestClient, auth_headers) -> None:
+    response = client.get("/v1/collections", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_retrieve_missing_header_returns_401(client: TestClient) -> None:
     _assert_unauthorized(client.post("/v1/retrieve", json=RETRIEVE_BODY))
 
 
-def test_retrieve_valid_key_still_501(client: TestClient, test_user) -> None:
-    _, api_key = test_user
-    response = client.post(
-        "/v1/retrieve",
-        json=RETRIEVE_BODY,
-        headers={"Authorization": f"Bearer {api_key}"},
-    )
-    assert response.status_code == 501
-    assert response.json()["error"] == "not_implemented"
+def test_retrieve_valid_key_without_collections_returns_404(
+    client: TestClient, auth_headers
+) -> None:
+    response = client.post("/v1/retrieve", json=RETRIEVE_BODY, headers=auth_headers)
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
 
 
 def test_documents_json_missing_header_returns_401(client: TestClient) -> None:
     _assert_unauthorized(client.post("/v1/documents/json", json=DOCUMENT_JSON_BODY))
 
 
-def test_documents_json_valid_key_still_501(client: TestClient, test_user) -> None:
-    _, api_key = test_user
+def test_documents_json_valid_key_missing_collection_returns_404(
+    client: TestClient, auth_headers
+) -> None:
     response = client.post(
-        "/v1/documents/json",
-        json=DOCUMENT_JSON_BODY,
-        headers={"Authorization": f"Bearer {api_key}"},
+        "/v1/documents/json", json=DOCUMENT_JSON_BODY, headers=auth_headers
     )
-    assert response.status_code == 501
-    assert response.json()["error"] == "not_implemented"
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"

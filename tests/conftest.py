@@ -94,6 +94,12 @@ def test_user(db_session, api_key_secret: str):
 
 
 @pytest.fixture
+def auth_headers(test_user) -> dict[str, str]:
+    _, api_key = test_user
+    return {"Authorization": f"Bearer {api_key}"}
+
+
+@pytest.fixture
 def test_collection(db_session, test_user):
     user, _ = test_user
     return create_collection(db_session, user, name="Test Collection", slug="test-collection")

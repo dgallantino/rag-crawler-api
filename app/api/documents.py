@@ -6,10 +6,9 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_system_user
-from app.api.stubs import raise_not_implemented
 from app.database import get_db
 from app.exceptions import ValidationFailedError
-from app.models import SystemUser
+from app.models import Collection, SystemUser
 from app.schemas.common import ErrorResponse
 from app.schemas.documents import (
     DocumentListItem,
@@ -20,6 +19,16 @@ from app.schemas.documents import (
     DocumentUploadResponse,
     validate_collection_identifier,
 )
+from app.services.collections import get_collection, get_collection_by_slug
+from app.services.documents import (
+    create_document_upload,
+    delete_document,
+    get_document,
+    get_document_status,
+    list_documents,
+    update_document,
+    validate_markdown_upload,
+)
 
 router = APIRouter(
     prefix="/documents",
@@ -28,7 +37,6 @@ router = APIRouter(
     responses={
         401: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
-        501: {"model": ErrorResponse},
     },
 )
 
@@ -43,11 +51,48 @@ def _validate_multipart_collection(
         raise ValidationFailedError(str(exc)) from exc
 
 
+def _resolve_collection(
+    db: Session,
+    user: SystemUser,
+    collection_id: UUID | None,
+    collection_slug: str | None,
+) -> Collection:
+    if collection_id is not None:
+        return get_collection(db, user, collection_id)
+    return get_collection_by_slug(db, user, collection_slug)[0]
+
+
+def _accept_upload(
+    db: Session,
+    user: SystemUser,
+    filename: str,
+    content: bytes,
+    collection_id: UUID | None,
+    collection_slug: str | None,
+) -> DocumentUploadResponse:
+    collection = _resolve_collection(db, user, collection_id, collection_slug)
+    validation = validate_markdown_upload(filename, content)
+    if not validation.valid:
+        raise ValidationFailedError(validation.reason or "Invalid content")
+
+    document = create_document_upload(
+        db, collection, filename, content.decode("utf-8")
+    )
+    return DocumentUploadResponse(
+        document_id=document.id,
+        filename=filename,
+        accepted=True,
+    )
+
+
 @router.post(
     "",
     response_model=DocumentUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    responses={409: {"model": ErrorResponse}},
+    responses={
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
 )
 async def upload_document(
     file: UploadFile = File(...),
@@ -57,24 +102,40 @@ async def upload_document(
     user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentUploadResponse:
     _validate_multipart_collection(collection_id, collection_slug)
-    raise_not_implemented()
+    filename = file.filename or ""
+    content = await file.read()
+    return _accept_upload(db, user, filename, content, collection_id, collection_slug)
 
 
 @router.post(
     "/json",
     response_model=DocumentUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    responses={409: {"model": ErrorResponse}},
+    responses={
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
 )
 def upload_document_json(
     body: DocumentUploadRequest,
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentUploadResponse:
-    raise_not_implemented()
+    return _accept_upload(
+        db,
+        user,
+        body.filename,
+        body.content.encode("utf-8"),
+        body.collection_id,
+        body.collection_slug,
+    )
 
 
-@router.get("", response_model=list[DocumentListItem])
+@router.get(
+    "",
+    response_model=list[DocumentListItem],
+    responses={404: {"model": ErrorResponse}},
+)
 def list_documents_route(
     collection_id: UUID | None = None,
     collection_slug: str | None = None,
@@ -85,7 +146,9 @@ def list_documents_route(
         raise ValidationFailedError(
             "Provide at most one of collection_id or collection_slug"
         )
-    raise_not_implemented()
+    return list_documents(
+        db, user, collection_id=collection_id, collection_slug=collection_slug
+    )
 
 
 @router.get(
@@ -98,7 +161,7 @@ def document_status(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentStatusResponse:
-    raise_not_implemented()
+    return get_document_status(db, user, document_id)
 
 
 @router.get(
@@ -111,7 +174,7 @@ def get_document_route(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentResponse:
-    raise_not_implemented()
+    return get_document(db, user, document_id)
 
 
 @router.patch(
@@ -125,7 +188,9 @@ def update_document_route(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> DocumentResponse:
-    raise_not_implemented()
+    return update_document(
+        db, user, document_id, title=body.title, content=body.content
+    )
 
 
 @router.delete(
@@ -138,4 +203,4 @@ def delete_document_route(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> None:
-    raise_not_implemented()
+    delete_document(db, user, document_id)
