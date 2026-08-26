@@ -10,12 +10,22 @@ from app.schemas.common import HealthResponse
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    summary="Check API liveness",
+    operation_id="health",
+)
 def health_check() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@router.get("/health/db", response_model=HealthResponse)
+@router.get(
+    "/health/db",
+    response_model=HealthResponse,
+    summary="Check database connectivity",
+    operation_id="health_db",
+)
 def db_health_check(db: Session = Depends(get_db)) -> HealthResponse:
     try:
         db.execute(text("SELECT 1"))

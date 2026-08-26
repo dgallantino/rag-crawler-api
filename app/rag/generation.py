@@ -11,10 +11,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.rag.chunks import ScoredChunk
 from app.rag.tokens import token_length
+from app.schemas.examples import EXAMPLES
 
 _SYSTEM_PROMPT = (
     "You are a helpful assistant. Answer the question using only the provided context. "
@@ -23,6 +24,10 @@ _SYSTEM_PROMPT = (
 
 
 class Source(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [EXAMPLES["source"]]},
+    )
+
     chunk_id: str
     document_id: str
     chunk_index: int
@@ -30,6 +35,10 @@ class Source(BaseModel):
 
 
 class RagResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [EXAMPLES["rag_response"]]},
+    )
+
     answer: str
     sources: list[Source]
 

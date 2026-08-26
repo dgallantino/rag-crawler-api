@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_system_user
 from app.database import get_db
 from app.models import SystemUser
 from app.schemas.common import ErrorResponse
+from app.schemas.examples import OPENAPI_EXAMPLES
 from app.schemas.query import QueryRequest, RagResponse, RetrieveRequest, RetrievalResult
 from app.services.rag import answer_service, chunks_to_retrieval_result, retrieval_service
 
@@ -39,7 +40,7 @@ def _filters_dict(body: RetrieveRequest) -> dict | None:
     operation_id="retrieve",
 )
 def retrieve(
-    body: RetrieveRequest,
+    body: RetrieveRequest = Body(openapi_examples=OPENAPI_EXAMPLES["retrieve"]),
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> RetrievalResult:
@@ -70,7 +71,7 @@ def retrieve(
     operation_id="query",
 )
 def query(
-    body: QueryRequest,
+    body: QueryRequest = Body(openapi_examples=OPENAPI_EXAMPLES["query"]),
     db: Session = Depends(get_db),
     user: SystemUser = Depends(get_current_system_user),
 ) -> RagResponse:
