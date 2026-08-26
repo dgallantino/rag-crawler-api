@@ -21,6 +21,17 @@ FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 TAGS_PATTERN = re.compile(r"^tags:\s*\[(.*?)\]", re.MULTILINE)
 
 
+def _lock_document(db: Session, document_id: str) -> Document | None:
+    """Reload and row-lock a document so store/fail writes can compare snapshots."""
+    return (
+        db.query(Document)
+        .filter(Document.id == UUID(document_id))
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+
+
 @dataclass(frozen=True)
 class ChunkResult:
     content: str
@@ -64,12 +75,12 @@ class DocumentProcessor(ABC):
         if document is None:
             return
 
-        try:
-            document.status = "processing"
-            document.error_message = None
+        source_content = document.content
+        source_title = document.title
 
+        try:
             on_status(DocumentStatusEvent(document_id, "chunking", "in_progress"))
-            chunks = self.chunk(document.content or "")
+            chunks = self.chunk(source_content or "")
             on_status(DocumentStatusEvent(document_id, "chunking", "completed"))
 
             if not chunks:
@@ -79,7 +90,7 @@ class DocumentProcessor(ABC):
             embed_inputs = [
                 build_contextualized_embedding_text(
                     chunk.content,
-                    title=document.title,
+                    title=source_title,
                     heading=(chunk.metadata or {}).get("section_header"),
                 )
                 for chunk in chunks
@@ -87,6 +98,13 @@ class DocumentProcessor(ABC):
             vectors = self.embed_texts(embed_inputs)
             on_status(DocumentStatusEvent(document_id, "embedding", "completed"))
 
+            current = _lock_document(db, document_id)
+            if current is None or current.content != source_content or current.title != source_title:
+                # concurrent write protection
+                db.rollback()
+                return
+
+            document = current
             on_status(DocumentStatusEvent(document_id, "storing", "in_progress"))
             db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
 
@@ -108,12 +126,16 @@ class DocumentProcessor(ABC):
             on_status(DocumentStatusEvent(document_id, "storing", "completed"))
         except Exception as exc:
             db.rollback()
-            document = db.query(Document).filter(Document.id == UUID(document_id)).one_or_none()
-            if document is not None:
+            document = _lock_document(db, document_id)
+            if (
+                document is not None
+                and document.content == source_content
+                and document.title == source_title
+            ):
                 document.status = "failed"
                 document.error_message = str(exc)
                 db.commit()
-            on_status(DocumentStatusEvent(document_id, "failed", "completed"))
+                on_status(DocumentStatusEvent(document_id, "failed", "completed"))
             raise
 
 
