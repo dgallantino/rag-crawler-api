@@ -10,7 +10,7 @@ from app.models import Collection, Document, DocumentChunk, SystemUser
 from app.schemas.documents import DocumentStatusResponse
 from app.services import job_status
 from app.services.collections import get_collection, get_collection_by_slug
-from app.services.triggers import trigger_process_document
+from app.services.triggers import QueueEnqueueError, trigger_process_document
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,12 @@ def create_document_upload(
         raise DocumentConflictError(f"Document with filename '{filename}' already exists") from exc
 
     db.refresh(document)
-    trigger_process_document(str(document.id))
+    try:
+        trigger_process_document(str(document.id))
+    except QueueEnqueueError:
+        db.delete(document)
+        db.commit()
+        raise
     return document
 
 
@@ -175,7 +180,13 @@ def update_document(
     db.commit()
     db.refresh(document)
     if title is not None or content is not None:
-        trigger_process_document(str(document.id))
+        try:
+            trigger_process_document(str(document.id))
+        except QueueEnqueueError:
+            document.status = "failed"
+            document.error_message = "Failed to queue document processing"
+            db.commit()
+            raise
     return document
 
 

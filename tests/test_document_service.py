@@ -83,6 +83,44 @@ def test_create_document_upload_raises_on_duplicate(
     mock_trigger.assert_not_called()
 
 
+@patch("app.services.documents.trigger_process_document")
+def test_create_document_upload_rolls_back_when_enqueue_fails(
+    mock_trigger, db_session, test_user, test_collection
+) -> None:
+    from app.services.triggers import QueueEnqueueError
+
+    mock_trigger.side_effect = QueueEnqueueError()
+
+    with pytest.raises(QueueEnqueueError, match="Failed to queue document processing"):
+        create_document_upload(db_session, test_collection, "guide.md", "# Guide")
+
+    assert db_session.query(Document).count() == 0
+    mock_trigger.assert_called_once()
+
+
+@patch("app.services.documents.trigger_process_document")
+def test_update_document_marks_failed_when_enqueue_fails(
+    mock_trigger, db_session, test_user, test_collection
+) -> None:
+    from app.services.triggers import QueueEnqueueError
+
+    document = create_document_upload(db_session, test_collection, "guide.md", "# Guide")
+    mock_trigger.reset_mock()
+    document.status = "success"
+    db_session.commit()
+
+    mock_trigger.side_effect = QueueEnqueueError()
+
+    with pytest.raises(QueueEnqueueError, match="Failed to queue document processing"):
+        update_document(db_session, test_user, document.id, content="# Revised")
+
+    db_session.refresh(document)
+    assert document.content == "# Revised"
+    assert document.status == "failed"
+    assert document.error_message == "Failed to queue document processing"
+    mock_trigger.assert_called_once_with(str(document.id))
+
+
 def test_get_document_status_raises_when_not_found(db_session, test_user) -> None:
     user, _ = test_user
 

@@ -123,6 +123,23 @@ def test_upload_duplicate_filename_returns_409(
     assert second.json()["error"] == "conflict"
 
 
+@patch("app.services.documents.trigger_process_document")
+def test_upload_returns_503_and_leaves_no_document_when_enqueue_fails(
+    mock_trigger, client: TestClient, auth_headers, test_collection
+) -> None:
+    from app.services.triggers import QueueEnqueueError
+
+    mock_trigger.side_effect = QueueEnqueueError()
+
+    response = client.post("/v1/documents/json", json=JSON_BODY, headers=auth_headers)
+    assert response.status_code == 503
+    assert response.json()["error"] == "service_unavailable"
+
+    listed = client.get("/v1/documents", headers=auth_headers)
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
 def test_upload_rejects_non_markdown(
     client: TestClient, auth_headers, test_collection
 ) -> None:
