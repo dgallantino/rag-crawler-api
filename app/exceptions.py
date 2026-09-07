@@ -13,6 +13,7 @@ from app.services.documents import (
     DocumentNotFoundError,
     DocumentValidationError,
 )
+from app.services.triggers import QueueEnqueueError
 
 
 class UnauthorizedError(Exception):
@@ -59,6 +60,14 @@ class NotImplementedAPIError(Exception):
     """Raised by stub routes that are not yet wired (→ 501)."""
 
     def __init__(self, message: str = "Not implemented") -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class ServiceUnavailableError(Exception):
+    """Raised when a dependent service is unavailable (→ 503)."""
+
+    def __init__(self, message: str = "Service temporarily unavailable") -> None:
         super().__init__(message)
         self.message = message
 
@@ -170,6 +179,22 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: NotImplementedAPIError
     ) -> JSONResponse:
         return _error_response(request, status.HTTP_501_NOT_IMPLEMENTED, "not_implemented", exc.message)
+
+    @app.exception_handler(ServiceUnavailableError)
+    async def handle_service_unavailable(
+        request: Request, exc: ServiceUnavailableError
+    ) -> JSONResponse:
+        return _error_response(
+            request, status.HTTP_503_SERVICE_UNAVAILABLE, "service_unavailable", exc.message
+        )
+
+    @app.exception_handler(QueueEnqueueError)
+    async def handle_queue_enqueue(
+        request: Request, exc: QueueEnqueueError
+    ) -> JSONResponse:
+        return _error_response(
+            request, status.HTTP_503_SERVICE_UNAVAILABLE, "service_unavailable", exc.message
+        )
 
     @app.exception_handler(Exception)
     async def handle_unhandled(request: Request, exc: Exception) -> JSONResponse:
