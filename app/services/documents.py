@@ -170,6 +170,7 @@ def update_document(
         document.content = content
         document.status = None
         document.error_message = None
+        db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
     if title is not None:
         document.title = title
     db.commit()

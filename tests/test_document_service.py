@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import Document
+from app.models import Document, DocumentChunk
 from app.services.collections import CollectionNotFoundError, create_collection
 from app.services.documents import (
     DocumentConflictError,
@@ -339,6 +339,17 @@ def test_update_document_content_reindexes_and_resets_status(
     document.error_message = "old"
     db_session.commit()
 
+    db_session.add(
+        DocumentChunk(
+            document_id=document.id,
+            collection_id=test_collection.id,
+            chunk_index=0,
+            content="stale chunk",
+            chunk_vector=[0.1] * 1536,
+        )
+    )
+    db_session.commit()
+
     updated = update_document(db_session, user, document.id, content="# Revised")
 
     assert updated.content == "# Revised"
@@ -346,6 +357,12 @@ def test_update_document_content_reindexes_and_resets_status(
     assert updated.status is None
     assert updated.error_message is None
     mock_trigger.assert_called_once_with(str(document.id))
+    assert (
+        db_session.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document.id)
+        .count()
+        == 0
+    )
 
 
 @patch("app.services.documents.trigger_process_document")
