@@ -219,9 +219,11 @@ def get_document_status(
 
     redis_status = job_status.get_job_status(str(document_id))
     if redis_status:
+        # Redis job state is only written during an in-flight ingest; prefer it over
+        # a stale DB status (e.g. success left after a title-only re-index).
         return DocumentStatusResponse(
             document_id=document.id,
-            status=document.status or "processing",
+            status="processing",
             step=redis_status.get("step"),
             steps=redis_status.get("steps"),
             error_message=document.error_message,
