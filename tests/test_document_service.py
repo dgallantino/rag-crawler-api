@@ -185,6 +185,36 @@ def test_get_document_status_reads_redis_when_available(
     assert response.error_message == "previous warning"
 
 
+@patch("app.services.documents.job_status.get_job_status")
+def test_get_document_status_prefers_redis_over_stale_db_success(
+    mock_redis_status, db_session, test_user, test_collection
+) -> None:
+    user, _ = test_user
+    document = Document(
+        collection_id=test_collection.id,
+        url="file://reindex.md",
+        title="reindex.md",
+        content="# Reindex",
+        status="success",
+    )
+    db_session.add(document)
+    db_session.commit()
+
+    mock_redis_status.return_value = {
+        "step": "chunking",
+        "steps": {
+            "chunking": "in_progress",
+            "embedding": "pending",
+            "storing": "pending",
+        },
+    }
+
+    response = get_document_status(db_session, user, document.id)
+
+    assert response.status == "processing"
+    assert response.step == "chunking"
+
+
 def test_get_document_status_includes_error_message(db_session, test_user, test_collection) -> None:
     user, _ = test_user
     document = Document(
