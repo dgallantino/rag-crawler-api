@@ -260,6 +260,44 @@ def test_process_document_skips_store_when_superseded(
     assert failed_events == []
 
 
+def test_process_document_skips_embedding_status_when_superseded_after_embed(
+    db_session,
+    test_collection,
+) -> None:
+    document = Document(
+        collection_id=test_collection.id,
+        url="file://race-embed.md",
+        title="race-embed.md",
+        content="version-b",
+    )
+    db_session.add(document)
+    db_session.commit()
+
+    processor = _make_processor()
+    processor.chunk = Mock(
+        return_value=[ChunkResult(content="chunk-b", metadata={})]
+    )
+
+    def embed_and_supersede(texts: list[str]) -> list[list[float]]:
+        document.content = "version-c"
+        db_session.commit()
+        return [[0.1] * 1536]
+
+    processor.embed_texts = Mock(side_effect=embed_and_supersede)
+
+    on_status = Mock()
+    processor.process_document(db_session, str(document.id), on_status=on_status)
+
+    embedding_events = [
+        call.args[0]
+        for call in on_status.call_args_list
+        if call.args[0].step == "embedding"
+    ]
+    assert embedding_events == [
+        DocumentStatusEvent(str(document.id), "embedding", "in_progress"),
+    ]
+
+
 def test_process_document_failure_does_not_mark_failed_when_superseded(
     db_session,
     test_collection,
