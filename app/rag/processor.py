@@ -21,6 +21,21 @@ FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 TAGS_PATTERN = re.compile(r"^tags:\s*\[(.*?)\]", re.MULTILINE)
 
 
+def _document_matches_snapshot(
+    db: Session,
+    document_id: str,
+    source_content: str | None,
+    source_title: str | None,
+) -> bool:
+    """True when the document row still matches the snapshot this job started with."""
+    current = db.query(Document).filter(Document.id == UUID(document_id)).one_or_none()
+    return (
+        current is not None
+        and current.content == source_content
+        and current.title == source_title
+    )
+
+
 def _lock_document(db: Session, document_id: str) -> Document | None:
     """Reload and row-lock a document so store/fail writes can compare snapshots."""
     return (
@@ -86,6 +101,10 @@ class DocumentProcessor(ABC):
             if not chunks:
                 raise ValueError("Document produced zero chunks after chunking")
 
+            if not _document_matches_snapshot(db, document_id, source_content, source_title):
+                db.rollback()
+                return
+
             on_status(DocumentStatusEvent(document_id, "embedding", "in_progress"))
             embed_inputs = [
                 build_contextualized_embedding_text(
@@ -96,6 +115,10 @@ class DocumentProcessor(ABC):
                 for chunk in chunks
             ]
             vectors = self.embed_texts(embed_inputs)
+            if not _document_matches_snapshot(db, document_id, source_content, source_title):
+                db.rollback()
+                return
+
             on_status(DocumentStatusEvent(document_id, "embedding", "completed"))
 
             current = _lock_document(db, document_id)
