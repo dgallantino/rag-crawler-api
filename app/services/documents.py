@@ -172,6 +172,11 @@ def update_document(
         document.error_message = None
     if title is not None:
         document.title = title
+        if content is None:
+            document.status = None
+            document.error_message = None
+        # Title is part of the embedding input; drop stale vectors until re-ingest finishes.
+        db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
     db.commit()
     db.refresh(document)
     if title is not None or content is not None:
