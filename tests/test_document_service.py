@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import Document
+from app.models import Document, DocumentChunk
 from app.services.collections import CollectionNotFoundError, create_collection
 from app.services.documents import (
     DocumentConflictError,
@@ -317,6 +317,15 @@ def test_update_document_title_reindexes_and_keeps_url(
     document = create_document_upload(db_session, test_collection, "guide.md", "# Guide")
     mock_trigger.reset_mock()
     document.status = "success"
+    db_session.add(
+        DocumentChunk(
+            document_id=document.id,
+            collection_id=test_collection.id,
+            chunk_index=0,
+            content="# Guide",
+            chunk_vector=[0.1, 0.2],
+        )
+    )
     db_session.commit()
 
     updated = update_document(db_session, user, document.id, title="Renamed Guide")
@@ -324,7 +333,13 @@ def test_update_document_title_reindexes_and_keeps_url(
     assert updated.title == "Renamed Guide"
     assert updated.url == "file://guide.md"
     assert updated.content == "# Guide"
-    assert updated.status == "success"
+    assert updated.status is None
+    assert (
+        db_session.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document.id)
+        .count()
+        == 0
+    )
     mock_trigger.assert_called_once_with(str(document.id))
 
 
